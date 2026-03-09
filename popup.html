@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      width: 260px;
+      padding: 15px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .main-view, .settings-view {
+      display: none;
+    }
+    .main-view.active, .settings-view.active {
+      display: block;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      font-size: 14px;
+      background: #ff6600;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    button:hover {
+      background: #e55a00;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: #f5f5f5;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+    button.secondary:hover {
+      background: #e8e8e8;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+    }
+    .error {
+      color: #d00;
+    }
+    .settings-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: #333;
+    }
+    .setting-item {
+      margin-bottom: 15px;
+    }
+    .setting-item label {
+      display: block;
+      font-size: 13px;
+      color: #333;
+      margin-bottom: 5px;
+    }
+    .setting-item select, .setting-item input[type="number"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .setting-item input[type="checkbox"] {
+      margin-right: 8px;
+    }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .button-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 15px;
+    }
+    .button-row button {
+      flex: 1;
+      margin-bottom: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- 主视图 -->
+  <div class="main-view active" id="mainView">
+    <button id="fetchBtn">开始抓取商品</button>
+    <button id="settingsBtn" class="secondary">设置</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <!-- 设置视图 -->
+  <div class="settings-view" id="settingsView">
+    <div class="settings-title">设置</div>
+    
+    <div class="setting-item">
+      <label>导出格式</label>
+      <select id="exportFormat">
+        <option value="xlsx">XLSX (Excel)</option>
+        <option value="markdown">Markdown</option>
+      </select>
+    </div>
+    
+    <div class="setting-item">
+      <label>抓取数量 (0 = 全部)</label>
+      <input type="number" id="maxProducts" min="0" max="1000" value="0">
+    </div>
+    
+    <div class="setting-item">
+      <label class="checkbox-label">
+        <input type="checkbox" id="filterAds" checked>
+        过滤广告商品
+      </label>
+    </div>
+    
+    <div class="button-row">
+      <button id="saveSettingsBtn">保存</button>
+      <button id="cancelSettingsBtn" class="secondary">取消</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

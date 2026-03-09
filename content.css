@@ -1,0 +1,55 @@
+/**
+ * 1688 智能选品助手 - Content Styles
+ * 通知和UI样式
+ */
+
+.scraper-notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  color: #fff;
+  z-index: 999999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  max-width: 400px;
+  word-wrap: break-word;
+}
+
+.scraper-notification-info {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.scraper-notification-success {
+  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+.scraper-notification-warning {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.scraper-notification-error {
+  background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+}
+
+.scraper-notification-fade {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+/* 图标闪烁动画 */
+@keyframes scraper-icon-flash {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.scraper-icon-flashing {
+  animation: scraper-icon-flash 0.5s ease-in-out 3;
+}
