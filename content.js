@@ -444,19 +444,67 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'extractProducts') {
-      executeExtraction(request.options).then(result => {
-        sendResponse(result);
-      });
-      return true;
-    }
-    
-    if (request.action === 'ping') {
-      sendResponse({ status: 'ready' });
-      return true;
-    }
-  });
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'extractProducts') {
+    executeExtraction(request.options).then(result => {
+      sendResponse(result);
+    });
+    return true;
+  }
 
-  console.log('[1688智能选品助手] 内容脚本已加载，点击扩展图标开始抓取');
+  if (request.action === 'getProducts') {
+    const products = extractProducts();
+    sendResponse({ success: true, products: products });
+    return true;
+  }
+
+  if (request.action === 'exportSelected') {
+    exportSelectedProducts(request.products, request.options).then(result => {
+      sendResponse(result);
+    });
+    return true;
+  }
+
+  if (request.action === 'ping') {
+    sendResponse({ status: 'ready' });
+    return true;
+  }
+});
+
+async function exportSelectedProducts(products, options = {}) {
+  const exportFormat = options.exportFormat || 'xlsx';
+
+  showNotification(`正在导出 ${products.length} 个商品...`, 'info');
+
+  try {
+    const now = new Date();
+    const dateStr = now.getFullYear().toString() +
+      (now.getMonth() + 1).toString().padStart(2, '0') +
+      now.getDate().toString().padStart(2, '0');
+    const timeStr = now.getHours().toString().padStart(2, '0') +
+      now.getMinutes().toString().padStart(2, '0');
+
+    const productsWithIndex = products.map((p, i) => ({ ...p, 序号: i + 1 }));
+
+    if (exportFormat === 'xlsx') {
+      showNotification(`正在下载 ${products.length} 个商品图片...`, 'info');
+      const buffer = await generateXLSX(productsWithIndex);
+      const filename = `1688_products_${dateStr}_${timeStr}.xlsx`;
+      downloadFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    } else {
+      const markdown = generateMarkdown(productsWithIndex);
+      const filename = `1688_products_${dateStr}_${timeStr}.md`;
+      downloadFile(markdown, filename, 'text/markdown;charset=utf-8');
+    }
+
+    showNotification(`成功导出 ${products.length} 个商品！`, 'success');
+    return { success: true, count: products.length };
+  } catch (error) {
+    console.error('[1688智能选品助手] 导出失败:', error);
+    showNotification('导出失败: ' + error.message, 'error');
+    return { success: false, message: error.message };
+  }
+}
+
+console.log('[1688智能选品助手] 内容脚本已加载，点击扩展图标开始抓取');
 })();
