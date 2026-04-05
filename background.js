@@ -67,7 +67,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     chrome.storage.sync.get('settings', async (result) => {
       const settings = result.settings || {};
       const exportFormat = settings.exportFormat || 'xlsx';
-      const columns = settings.columns || {
+      const columns = request.options?.columns || settings.columns || {
         '序号': true, '图片': true, '商品标题': true,
         '价格': true, '销量': true, '店铺名称': true, '商品链接': true
       };

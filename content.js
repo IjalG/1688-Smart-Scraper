@@ -452,6 +452,11 @@
   async function exportSelectedProducts(products, options = {}) {
     const exportFormat = options.exportFormat || 'xlsx';
     const lang = options.language || 'zh';
+    if (options.columns) {
+      Object.keys(options.columns).forEach(key => {
+        CONFIG.columns[key] = options.columns[key];
+      });
+    }
 
     showNotification(lang === 'en' ? `Exporting ${products.length} products...` : `正在导出 ${products.length} 个商品...`, 'info');
 
@@ -491,6 +496,11 @@
       CONFIG.maxProducts = options.maxProducts || 0;
       CONFIG.filterAds = options.filterAds !== false;
       CONFIG.exportFormat = options.exportFormat || 'xlsx';
+      if (options.columns) {
+        Object.keys(options.columns).forEach(key => {
+          CONFIG.columns[key] = options.columns[key];
+        });
+      }
       const products = extractProducts();
       sendResponse({ success: true, products: products });
       return true;

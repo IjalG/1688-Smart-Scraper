@@ -314,6 +314,7 @@ document.getElementById('selectBtn').addEventListener('click', async () => {
       return;
     }
 
+    const settings = await loadSettings();
     const selectUrl = chrome.runtime.getURL(`select.html?tabId=${tab.id}&lang=${settings.language || 'zh'}`);
     await chrome.tabs.create({ url: selectUrl });
     window.close();

@@ -645,18 +645,19 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
   try {
     const settings = await chrome.storage.sync.get('settings');
     const exportFormat = settings.settings?.exportFormat || 'xlsx';
+    const columns = settings.settings?.columns || {};
 
     if (isCollectionMode) {
       await chrome.runtime.sendMessage({
         action: 'exportFromCollection',
         products: selectedList,
-        options: { exportFormat, language: currentLang }
+        options: { exportFormat, language: currentLang, columns }
       });
     } else {
       await chrome.tabs.sendMessage(currentTabId, {
         action: 'exportSelected',
         products: selectedList,
-        options: { exportFormat, language: currentLang }
+        options: { exportFormat, language: currentLang, columns }
       });
     }
 
