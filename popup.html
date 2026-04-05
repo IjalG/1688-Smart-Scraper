@@ -111,33 +111,43 @@ button.collection:hover {
   margin-top: -4px;
   margin-bottom: 8px;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
+  width: 100%;
 }
 .folder-select select {
   flex: 1;
-  padding: 8px;
+  min-width: 0;
+  max-width: calc(100% - 32px);
+  padding: 6px 8px;
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 12px;
   background: #fafafa;
   color: #333;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .folder-select select:focus {
   outline: none;
   border-color: #4a90d9;
 }
 .folder-new-btn {
-  padding: 8px 10px;
-  font-size: 11px;
+  width: 28px;
+  height: 30px;
+  min-width: 28px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
   background: #f0f0f0;
   color: #666;
   border: 1px solid #ddd;
   border-radius: 4px;
   cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .folder-new-btn:hover {
   background: #e8e8e8;
