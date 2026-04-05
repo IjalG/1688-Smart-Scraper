@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>1688 商品选择</title>
+<title>1688 Product Selection</title>
 <style>
 * { box-sizing: border-box; }
 body {
@@ -19,15 +19,40 @@ body {
   height: 100%;
 }
 .left-panel {
-  width: 360px;
+  width: 380px;
+  min-width: 250px;
+  max-width: 70%;
   background: #fff;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e0e0e0;
   flex-shrink: 0;
 }
+.resize-handle {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: #e0e0e0;
+  transition: background 0.2s;
+}
+.resize-handle:hover::after,
+.resize-handle.dragging::after {
+  background: #ff6600;
+}
 .right-panel {
   flex: 1;
+  min-width: 300px;
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -54,6 +79,8 @@ body {
   padding: 10px 15px;
   border-bottom: 1px solid #eee;
   background: #fafafa;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .select-count {
   font-size: 13px;
@@ -63,6 +90,7 @@ body {
 .toolbar-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .toolbar-actions button {
   padding: 6px 12px;
@@ -74,6 +102,96 @@ body {
   cursor: pointer;
 }
 .toolbar-actions button:hover {
+  background: #f5f5f5;
+}
+.toolbar-actions button.danger {
+  color: #d00;
+  border-color: #fcc;
+}
+.toolbar-actions button.danger:hover {
+  background: #fff5f5;
+}
+.folder-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 15px;
+  border-bottom: 1px solid #eee;
+  background: #fafafa;
+}
+.folder-bar select {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+.folder-bar select:focus {
+  border-color: #ff6600;
+}
+.folder-bar button {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: #fff;
+  color: #333;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.folder-bar button:hover {
+  background: #f5f5f5;
+}
+.filter-bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 15px;
+  border-bottom: 1px solid #eee;
+  background: #fafafa;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.filter-bar input[type="text"] {
+  min-width: 100px;
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+.filter-bar input[type="text"]:focus {
+  border-color: #ff6600;
+}
+.filter-bar input[type="number"] {
+  width: 70px;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+.filter-bar input[type="number"]:focus {
+  border-color: #ff6600;
+}
+.filter-bar .filter-sep {
+  color: #999;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.filter-bar .filter-clear {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: #fff;
+  color: #666;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.filter-bar .filter-clear:hover {
   background: #f5f5f5;
 }
 .product-list {
@@ -91,6 +209,7 @@ body {
   background: #fff;
   cursor: pointer;
   transition: all 0.2s;
+  position: relative;
 }
 .product-item:hover {
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -98,6 +217,13 @@ body {
 .product-item.selected {
   border-color: #ff6600;
   background: #fff8f5;
+}
+.product-item.focused {
+  outline: 2px solid #ff6600;
+  outline-offset: -2px;
+}
+.product-item.hidden {
+  display: none;
 }
 .product-item input[type="checkbox"] {
   margin-right: 10px;
@@ -146,6 +272,32 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: #f5f5f5;
+  color: #999;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s;
+}
+.product-item:hover .delete-btn {
+  opacity: 1;
+}
+.delete-btn:hover {
+  background: #fee;
+  color: #d00;
 }
 .footer {
   padding: 15px;
@@ -248,54 +400,86 @@ body {
   font-size: 14px;
   color: #666;
 }
-.status-bar {
-  padding: 10px 15px;
-  background: #fff8f5;
-  border-top: 1px solid #ffe0cc;
-  font-size: 12px;
-  color: #ff6600;
+.keyboard-hint {
+  padding: 8px 15px;
+  font-size: 11px;
+  color: #aaa;
   text-align: center;
+  border-top: 1px solid #eee;
+  background: #fafafa;
+}
+.keyboard-hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: #eee;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: monospace;
 }
 </style>
 </head>
 <body>
 <div class="loading-overlay" id="loadingOverlay">
   <div class="loading-spinner"></div>
-  <div class="loading-text">正在加载商品数据...</div>
+  <div class="loading-text" data-i18n="loadingProducts">Loading products...</div>
 </div>
 
 <div class="container" id="mainContainer" style="display: none;">
   <div class="left-panel">
     <div class="header">
-      <h1>1688 商品选择</h1>
-      <div class="header-sub">点击商品可在右侧查看详情</div>
+      <h1 data-i18n="productSelection">1688 Product Selection</h1>
+      <div class="header-sub" data-i18n="clickToPreview">Click products to preview on the right</div>
     </div>
     
     <div class="toolbar">
-      <span class="select-count" id="selectCount">已选: 0 个商品</span>
+      <span class="select-count" id="selectCount">Selected: 0</span>
       <div class="toolbar-actions">
-        <button id="selectAllBtn">全选</button>
-        <button id="deselectAllBtn">取消全选</button>
+        <button id="selectAllBtn" data-i18n="selectAll">Select All</button>
+        <button id="deselectAllBtn" data-i18n="deselectAll">Deselect</button>
+        <button id="deleteSelectedBtn" class="danger" style="display: none;" data-i18n="deleteSelected">Delete</button>
+        <button id="clearCollectionBtn" class="danger" style="display: none;" data-i18n="clearCollection">Clear</button>
       </div>
+    </div>
+
+    <div class="folder-bar" id="folderBar" style="display: none;">
+      <select id="folderSelect"></select>
+      <button id="newFolderBtn" data-i18n="newFolder">New Folder</button>
+      <button id="renameFolderBtn" data-i18n="renameFolder">Rename</button>
+      <button id="deleteFolderBtn" class="danger" data-i18n="deleteFolder">Delete</button>
+    </div>
+
+    <div class="filter-bar">
+      <input type="text" id="searchInput" data-i18n-placeholder="searchPlaceholder" placeholder="Search title/shop...">
+      <input type="number" id="priceMin" data-i18n-placeholder="minPrice" placeholder="Min" min="0" step="0.01">
+      <span class="filter-sep">-</span>
+      <input type="number" id="priceMax" data-i18n-placeholder="maxPrice" placeholder="Max" min="0" step="0.01">
+      <button class="filter-clear" id="clearFilterBtn" data-i18n="clearFilter">Clear</button>
     </div>
     
     <div class="product-list" id="productList"></div>
+
+    <div class="keyboard-hint">
+      <kbd>Space</kbd> <span data-i18n="keyToggle">toggle</span> <kbd>↑↓</kbd> <span data-i18n="keyNavigate">navigate</span> <kbd>Enter</kbd> <span data-i18n="keyPreview">preview</span> <kbd data-i18n-key="Delete" style="display:none;">Del</kbd><span data-i18n="keyDelete" style="display:none;">delete</span>
+    </div>
     
     <div class="footer">
-      <button id="exportBtn">导出选中的商品</button>
+      <button id="exportBtn" data-i18n="exportSelected">Export Selected</button>
     </div>
   </div>
   
+  <div class="resize-handle" id="resizeHandle"></div>
+  
   <div class="right-panel">
     <div class="preview-header">
-      <span class="preview-title" id="previewTitle">请点击左侧商品查看详情</span>
+      <span class="preview-title" id="previewTitle" data-i18n="clickToPreviewTitle">Click a product to preview</span>
       <div class="preview-actions">
-        <a href="#" id="openInNewTab" target="_blank" style="display: none;">在新标签页打开 ↗</a>
+        <a href="#" id="openInNewTab" target="_blank" style="display: none;" data-i18n="openNewTab">Open in new tab ↗</a>
       </div>
     </div>
     <div class="preview-placeholder" id="previewPlaceholder">
       <div class="preview-placeholder-icon">📦</div>
-      <div class="preview-placeholder-text">请点击左侧商品查看详情</div>
+      <div class="preview-placeholder-text" data-i18n="clickToPreviewTitle">Click a product to preview</div>
     </div>
     <iframe class="preview-frame" id="previewFrame" style="display: none;"></iframe>
   </div>

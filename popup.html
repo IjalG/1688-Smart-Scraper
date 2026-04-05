@@ -42,6 +42,12 @@ button.secondary {
 button.secondary:hover {
   background: #e8e8e8;
 }
+button.collection {
+  background: #4a90d9;
+}
+button.collection:hover {
+  background: #357abd;
+}
 .status {
   margin-top: 10px;
   font-size: 12px;
@@ -91,13 +97,61 @@ button.secondary:hover {
   flex: 1;
   margin-bottom: 0;
 }
+.collection-badge {
+  display: inline-block;
+  background: #fff;
+  color: #ff6600;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+  font-weight: bold;
+}
+.folder-select {
+  margin-top: -4px;
+  margin-bottom: 8px;
+}
+.folder-select select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fafafa;
+  color: #333;
+  cursor: pointer;
+}
+.folder-select select:focus {
+  outline: none;
+  border-color: #4a90d9;
+}
+.column-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.column-grid label {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  cursor: pointer;
+}
+.divider {
+  height: 1px;
+  background: #eee;
+  margin: 12px 0;
+}
 </style>
 </head>
 <body>
 <!-- 主视图 -->
 <div class="main-view active" id="mainView">
-  <button id="fetchBtn">开始抓取商品</button>
+  <button id="addToCollectionBtn" class="collection">加入收藏夹</button>
+  <div class="folder-select" id="folderSelectWrap" style="display: none;">
+    <select id="popupFolderSelect"></select>
+  </div>
   <button id="selectBtn">选取导出</button>
+  <button id="openCollectionBtn" class="secondary">查看收藏夹 <span class="collection-badge" id="collectionBadge">0</span></button>
   <button id="settingsBtn" class="secondary">设置</button>
   <div class="status" id="status"></div>
 </div>
@@ -124,6 +178,29 @@ button.secondary:hover {
       <input type="checkbox" id="filterAds" checked>
       过滤广告商品
     </label>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="setting-item">
+    <label>语言</label>
+    <select id="language">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
+  </div>
+
+  <div class="setting-item">
+    <label>导出字段</label>
+    <div class="column-grid">
+      <label><input type="checkbox" id="col_序号" checked> 序号</label>
+      <label><input type="checkbox" id="col_图片" checked> 图片</label>
+      <label><input type="checkbox" id="col_商品标题" checked> 商品标题</label>
+      <label><input type="checkbox" id="col_价格" checked> 价格</label>
+      <label><input type="checkbox" id="col_销量" checked> 销量</label>
+      <label><input type="checkbox" id="col_店铺名称" checked> 店铺名称</label>
+      <label><input type="checkbox" id="col_商品链接" checked> 商品链接</label>
+    </div>
   </div>
 
   <div class="button-row">

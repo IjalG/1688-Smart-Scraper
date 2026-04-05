@@ -6,11 +6,18 @@
 (function() {
   'use strict';
 
-  // 配置项
+  const ALL_COLUMNS = ['序号', '图片', '商品标题', '价格', '销量', '店铺名称', '商品链接'];
+
+  const DEFAULT_COLUMNS = {
+    '序号': true, '图片': true, '商品标题': true,
+    '价格': true, '销量': true, '店铺名称': true, '商品链接': true
+  };
+
   const CONFIG = {
-    maxProducts: 0,  // 0 = 全部
+    maxProducts: 0,
     filterAds: true,
     exportFormat: 'xlsx',
+    columns: { ...DEFAULT_COLUMNS },
     selectors: {
       productCards: [
         '.search-offer-wrapper:not(.cardui-adOffer)',
@@ -126,7 +133,7 @@
   function extractLink(card) {
     const allLinks = card.querySelectorAll('a[href]');
     let offerId = null;
-    
+
     for (const link of allLinks) {
       const href = link.href || '';
       const offerIdMatch = href.match(/offerId=(\d+)/);
@@ -137,9 +144,9 @@
         }
       }
     }
-    
+
     if (offerId) return `https://detail.1688.com/offer/${offerId}.html`;
-    
+
     for (const link of allLinks) {
       const href = link.href || '';
       if (href.includes('detail.1688.com/offer/') && !href.includes('similar_search')) {
@@ -152,13 +159,13 @@
   function extractTitle(card) {
     let titleEl = card.querySelector('.title-text');
     if (titleEl) return cleanText(titleEl.textContent);
-    
+
     titleEl = card.querySelector('.offer-title');
     if (titleEl) return cleanText(titleEl.textContent);
 
     titleEl = card.querySelector('.offer-title-row');
     if (titleEl) return cleanText(titleEl.textContent);
-    
+
     const linkEl = card.querySelector('a[title]');
     if (linkEl && linkEl.title && !linkEl.title.includes('旺旺')) {
       return cleanText(linkEl.title);
@@ -169,7 +176,7 @@
       const alt = imgElement.getAttribute('alt');
       if (alt) return cleanText(alt);
     }
-    
+
     titleEl = card.querySelector('[class*="title"]');
     if (titleEl) {
       const text = cleanText(titleEl.textContent);
@@ -220,14 +227,14 @@
 
     for (let i = 0; i < productCards.length && validCount < maxCount; i++) {
       const card = productCards[i];
-      
+
       if (CONFIG.filterAds && isAdCard(card)) {
         console.log(`[1688智能选品助手] 跳过广告卡片 #${i}`);
         continue;
       }
 
       const productData = extractProductData(card, validCount);
-      
+
       if (productData.商品标题) {
         console.log(`[1688智能选品助手] 提取商品 #${validCount}:`, productData.商品标题);
         products.push(productData);
@@ -272,36 +279,81 @@
     }
   }
 
-  async function generateXLSX(products) {
+  const I18N_EXPORT = {
+    zh: {
+      cols: { '序号': '序号', '图片': '图片', '商品标题': '商品标题', '价格': '价格(元)', '销量': '销量', '店铺名称': '店铺名称', '商品链接': '商品链接' },
+      title: '1688 商品数据',
+      exportTime: '导出时间',
+      productCount: '商品数量',
+      price: '价格',
+      sales: '销量',
+      shop: '店铺',
+      link: '链接',
+      viewProduct: '查看商品',
+      unknown: '未知商品',
+      yuan: '元',
+      attr: '属性',
+      value: '值'
+    },
+    en: {
+      cols: { '序号': 'No.', '图片': 'Image', '商品标题': 'Title', '价格': 'Price (CNY)', '销量': 'Sales', '店铺名称': 'Shop', '商品链接': 'Link' },
+      title: '1688 Product Data',
+      exportTime: 'Export Time',
+      productCount: 'Products',
+      price: 'Price',
+      sales: 'Sales',
+      shop: 'Shop',
+      link: 'Link',
+      viewProduct: 'View Product',
+      unknown: 'Unknown',
+      yuan: 'CNY',
+      attr: 'Attribute',
+      value: 'Value'
+    }
+  };
+
+  function getDict(lang) {
+    return I18N_EXPORT[lang] || I18N_EXPORT.zh;
+  }
+
+  async function generateXLSX(products, lang) {
+    const dict = getDict(lang);
     console.log('[1688智能选品助手] 正在下载图片...');
     const imagePromises = products.map(async (product, index) => {
-      if (product.图片链接) {
+      if (product.图片链接 && CONFIG.columns['图片']) {
         console.log(`[1688智能选品助手] 下载图片 ${index + 1}/${products.length}`);
         const base64 = await imageToBase64(product.图片链接);
         return { ...product, 图片base64: base64 };
       }
       return { ...product, 图片base64: '' };
     });
-    
+
     const productsWithImages = await Promise.all(imagePromises);
     console.log('[1688智能选品助手] 图片下载完成');
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = '1688智能选品助手';
-    
-    const worksheet = workbook.addWorksheet('商品数据', {
+    workbook.creator = '1688 Smart Scraper';
+
+    const worksheet = workbook.addWorksheet('Products', {
       views: [{ state: 'frozen', ySplit: 1 }]
     });
 
-    worksheet.columns = [
-      { header: '序号', key: '序号', width: 8 },
-      { header: '图片', key: '图片', width: 15 },
-      { header: '商品标题', key: '商品标题', width: 50 },
-      { header: '价格(元)', key: '价格', width: 12 },
-      { header: '销量', key: '销量', width: 12 },
-      { header: '店铺名称', key: '店铺名称', width: 25 },
-      { header: '商品链接', key: '商品链接', width: 40 }
-    ];
+    const colHeaders = [];
+    const colKeys = [];
+    const colWidths = { '序号': 8, '图片': 15, '商品标题': 50, '价格': 12, '销量': 12, '店铺名称': 25, '商品链接': 40 };
+
+    ALL_COLUMNS.forEach(key => {
+      if (CONFIG.columns[key]) {
+        colHeaders.push(dict.cols[key]);
+        colKeys.push(key);
+      }
+    });
+
+    worksheet.columns = colHeaders.map((h, i) => ({
+      header: h,
+      key: colKeys[i],
+      width: colWidths[colKeys[i]] || 20
+    }));
 
     const headerRow = worksheet.getRow(1);
     headerRow.height = 25;
@@ -316,28 +368,26 @@
     for (let i = 0; i < productsWithImages.length; i++) {
       const product = productsWithImages[i];
       const rowNum = i + 2;
-      
-      const row = worksheet.addRow({
-        序号: product.序号,
-        商品标题: product.商品标题,
-        价格: product.价格,
-        销量: product.销量,
-        店铺名称: product.店铺名称,
-        商品链接: product.商品链接
+
+      const rowData = {};
+      colKeys.forEach(key => {
+        rowData[key] = product[key] || '';
       });
 
+      const row = worksheet.addRow(rowData);
       row.height = 65;
 
-      if (product.图片base64) {
+      if (CONFIG.columns['图片'] && product.图片base64) {
         try {
           const base64Data = product.图片base64.split(',')[1];
           const imageId = workbook.addImage({
             base64: base64Data,
             extension: product.图片base64.includes('image/png') ? 'png' : 'jpeg'
           });
-          
+
+          const imgColIdx = colKeys.indexOf('图片');
           worksheet.addImage(imageId, {
-            tl: { col: 1, row: rowNum - 1 },
+            tl: { col: imgColIdx, row: rowNum - 1 },
             ext: { width: 60, height: 60 }
           });
         } catch (e) {
@@ -345,37 +395,41 @@
         }
       }
 
-      row.getCell('序号').alignment = { horizontal: 'left', vertical: 'middle' };
-      row.getCell('商品标题').alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-      row.getCell('价格').alignment = { horizontal: 'left', vertical: 'middle' };
-      row.getCell('销量').alignment = { horizontal: 'left', vertical: 'middle' };
-      row.getCell('店铺名称').alignment = { horizontal: 'left', vertical: 'middle' };
-      row.getCell('商品链接').alignment = { horizontal: 'left', vertical: 'middle' };
+      colKeys.forEach(key => {
+        const cell = row.getCell(key);
+        if (key === '商品标题') {
+          cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+        } else {
+          cell.alignment = { horizontal: 'left', vertical: 'middle' };
+        }
+      });
     }
 
     return await workbook.xlsx.writeBuffer();
   }
 
-  function generateMarkdown(products) {
-    let md = '# 1688 商品数据\n\n';
-    md += `> 导出时间: ${new Date().toLocaleString('zh-CN')}\n`;
-    md += `> 商品数量: ${products.length}\n\n`;
+  function generateMarkdown(products, lang) {
+    const dict = getDict(lang);
+    const locale = lang === 'en' ? 'en-US' : 'zh-CN';
+    let md = `# ${dict.title}\n\n`;
+    md += `> ${dict.exportTime}: ${new Date().toLocaleString(locale)}\n`;
+    md += `> ${dict.productCount}: ${products.length}\n\n`;
     md += '---\n\n';
 
     for (const product of products) {
-      md += `## ${product.序号}. ${product.商品标题 || '未知商品'}\n\n`;
-      
-      if (product.图片链接) {
-        md += `![商品图片](${product.图片链接})\n\n`;
+      md += `## ${product.序号}. ${product.商品标题 || dict.unknown}\n\n`;
+
+      if (CONFIG.columns['图片'] && product.图片链接) {
+        md += `![Product](${product.图片链接})\n\n`;
       }
-      
-      md += '| 属性 | 值 |\n';
+
+      md += `| ${dict.attr} | ${dict.value} |\n`;
       md += '| --- | --- |\n';
-      md += `| 价格 | ${product.价格 || '-'} 元 |\n`;
-      md += `| 销量 | ${product.销量 || '0'} |\n`;
-      md += `| 店铺 | ${product.店铺名称 || '-'} |\n`;
-      if (product.商品链接) {
-        md += `| 链接 | [查看商品](${product.商品链接}) |\n`;
+      if (CONFIG.columns['价格']) md += `| ${dict.price} | ${product.价格 || '-'} ${dict.yuan} |\n`;
+      if (CONFIG.columns['销量']) md += `| ${dict.sales} | ${product.销量 || '0'} |\n`;
+      if (CONFIG.columns['店铺名称']) md += `| ${dict.shop} | ${product.店铺名称 || '-'} |\n`;
+      if (CONFIG.columns['商品链接'] && product.商品链接) {
+        md += `| ${dict.link} | [${dict.viewProduct}](${product.商品链接}) |\n`;
       }
       md += '\n---\n\n';
     }
@@ -395,22 +449,13 @@
     URL.revokeObjectURL(url);
   }
 
-  async function executeExtraction(options = {}) {
-    // 应用设置
-    CONFIG.maxProducts = options.maxProducts || 0;
-    CONFIG.filterAds = options.filterAds !== false;
-    CONFIG.exportFormat = options.exportFormat || 'xlsx';
+  async function exportSelectedProducts(products, options = {}) {
+    const exportFormat = options.exportFormat || 'xlsx';
+    const lang = options.language || 'zh';
 
-    showNotification('正在提取商品数据...', 'info');
+    showNotification(lang === 'en' ? `Exporting ${products.length} products...` : `正在导出 ${products.length} 个商品...`, 'info');
 
     try {
-      const products = extractProducts();
-
-      if (products.length === 0) {
-        showNotification('未找到有效商品数据，请确保页面已加载完成', 'warning');
-        return { success: false, message: '未找到有效商品数据' };
-      }
-
       const now = new Date();
       const dateStr = now.getFullYear().toString() +
         (now.getMonth() + 1).toString().padStart(2, '0') +
@@ -418,93 +463,51 @@
       const timeStr = now.getHours().toString().padStart(2, '0') +
         now.getMinutes().toString().padStart(2, '0');
 
-      if (CONFIG.exportFormat === 'xlsx') {
-        showNotification(`正在下载 ${products.length} 个商品图片...`, 'info');
-        const buffer = await generateXLSX(products);
+      const productsWithIndex = products.map((p, i) => ({ ...p, 序号: i + 1 }));
+
+      if (exportFormat === 'xlsx') {
+        showNotification(lang === 'en' ? `Downloading ${products.length} images...` : `正在下载 ${products.length} 个商品图片...`, 'info');
+        const buffer = await generateXLSX(productsWithIndex, lang);
         const filename = `1688_products_${dateStr}_${timeStr}.xlsx`;
         downloadFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       } else {
-        const markdown = generateMarkdown(products);
+        const markdown = generateMarkdown(productsWithIndex, lang);
         const filename = `1688_products_${dateStr}_${timeStr}.md`;
         downloadFile(markdown, filename, 'text/markdown;charset=utf-8');
       }
 
-      showNotification(`成功提取 ${products.length} 个商品！`, 'success');
-      
-      return { 
-        success: true, 
-        count: products.length,
-        products: products 
-      };
-
+      showNotification(lang === 'en' ? `Successfully exported ${products.length} products!` : `成功导出 ${products.length} 个商品！`, 'success');
+      return { success: true, count: products.length };
     } catch (error) {
-      console.error('[1688智能选品助手] 提取失败:', error);
-      showNotification('提取失败: ' + error.message, 'error');
+      console.error('[1688智能选品助手] 导出失败:', error);
+      showNotification(lang === 'en' ? 'Export failed: ' + error.message : '导出失败: ' + error.message, 'error');
       return { success: false, message: error.message };
     }
   }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'extractProducts') {
-    executeExtraction(request.options).then(result => {
-      sendResponse(result);
-    });
-    return true;
-  }
-
-  if (request.action === 'getProducts') {
-    const products = extractProducts();
-    sendResponse({ success: true, products: products });
-    return true;
-  }
-
-  if (request.action === 'exportSelected') {
-    exportSelectedProducts(request.products, request.options).then(result => {
-      sendResponse(result);
-    });
-    return true;
-  }
-
-  if (request.action === 'ping') {
-    sendResponse({ status: 'ready' });
-    return true;
-  }
-});
-
-async function exportSelectedProducts(products, options = {}) {
-  const exportFormat = options.exportFormat || 'xlsx';
-
-  showNotification(`正在导出 ${products.length} 个商品...`, 'info');
-
-  try {
-    const now = new Date();
-    const dateStr = now.getFullYear().toString() +
-      (now.getMonth() + 1).toString().padStart(2, '0') +
-      now.getDate().toString().padStart(2, '0');
-    const timeStr = now.getHours().toString().padStart(2, '0') +
-      now.getMinutes().toString().padStart(2, '0');
-
-    const productsWithIndex = products.map((p, i) => ({ ...p, 序号: i + 1 }));
-
-    if (exportFormat === 'xlsx') {
-      showNotification(`正在下载 ${products.length} 个商品图片...`, 'info');
-      const buffer = await generateXLSX(productsWithIndex);
-      const filename = `1688_products_${dateStr}_${timeStr}.xlsx`;
-      downloadFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    } else {
-      const markdown = generateMarkdown(productsWithIndex);
-      const filename = `1688_products_${dateStr}_${timeStr}.md`;
-      downloadFile(markdown, filename, 'text/markdown;charset=utf-8');
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'getProducts') {
+      const options = request.options || {};
+      CONFIG.maxProducts = options.maxProducts || 0;
+      CONFIG.filterAds = options.filterAds !== false;
+      CONFIG.exportFormat = options.exportFormat || 'xlsx';
+      const products = extractProducts();
+      sendResponse({ success: true, products: products });
+      return true;
     }
 
-    showNotification(`成功导出 ${products.length} 个商品！`, 'success');
-    return { success: true, count: products.length };
-  } catch (error) {
-    console.error('[1688智能选品助手] 导出失败:', error);
-    showNotification('导出失败: ' + error.message, 'error');
-    return { success: false, message: error.message };
-  }
-}
+    if (request.action === 'exportSelected') {
+      exportSelectedProducts(request.products, request.options).then(result => {
+        sendResponse(result);
+      });
+      return true;
+    }
 
-console.log('[1688智能选品助手] 内容脚本已加载，点击扩展图标开始抓取');
+    if (request.action === 'ping') {
+      sendResponse({ status: 'ready' });
+      return true;
+    }
+  });
+
+  console.log('[1688智能选品助手] 内容脚本已加载');
 })();
