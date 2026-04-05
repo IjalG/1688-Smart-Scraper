@@ -318,6 +318,7 @@
 
   async function generateXLSX(products, lang) {
     const dict = getDict(lang);
+    console.log('[1688智能选品助手] 导出语言:', lang, dict);
     console.log('[1688智能选品助手] 正在下载图片...');
     const imagePromises = products.map(async (product, index) => {
       if (product.图片链接 && CONFIG.columns['图片']) {
