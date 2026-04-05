@@ -113,12 +113,10 @@ button.collection:hover {
   display: flex;
   gap: 4px;
   align-items: center;
-  width: 100%;
 }
 .folder-select select {
   flex: 1;
   min-width: 0;
-  max-width: calc(100% - 32px);
   padding: 6px 8px;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -128,6 +126,7 @@ button.collection:hover {
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .folder-select select:focus {
   outline: none;
