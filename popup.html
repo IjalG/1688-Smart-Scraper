@@ -114,9 +114,13 @@ button.collection:hover {
   gap: 4px;
   align-items: center;
 }
-.folder-select select {
+.folder-select-wrap {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+}
+.folder-select-wrap select {
+  width: 100%;
   padding: 6px 8px;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -124,11 +128,8 @@ button.collection:hover {
   background: #fafafa;
   color: #333;
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.folder-select select:focus {
+.folder-select-wrap select:focus {
   outline: none;
   border-color: #4a90d9;
 }
@@ -175,7 +176,9 @@ button.collection:hover {
 <div class="main-view active" id="mainView">
   <button id="addToCollectionBtn" class="collection">加入收藏夹</button>
   <div class="folder-select" id="folderSelectWrap" style="display: none;">
-    <select id="popupFolderSelect"></select>
+    <div class="folder-select-wrap">
+      <select id="popupFolderSelect"></select>
+    </div>
     <button class="folder-new-btn" id="popupNewFolderBtn">+</button>
   </div>
   <button id="selectBtn">选取导出</button>
