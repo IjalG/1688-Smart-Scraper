@@ -110,9 +110,12 @@ button.collection:hover {
 .folder-select {
   margin-top: -4px;
   margin-bottom: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 .folder-select select {
-  width: 100%;
+  flex: 1;
   padding: 8px;
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -124,6 +127,21 @@ button.collection:hover {
 .folder-select select:focus {
   outline: none;
   border-color: #4a90d9;
+}
+.folder-new-btn {
+  padding: 8px 10px;
+  font-size: 11px;
+  background: #f0f0f0;
+  color: #666;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.folder-new-btn:hover {
+  background: #e8e8e8;
+  color: #333;
 }
 .column-grid {
   display: grid;
@@ -149,6 +167,7 @@ button.collection:hover {
   <button id="addToCollectionBtn" class="collection">加入收藏夹</button>
   <div class="folder-select" id="folderSelectWrap" style="display: none;">
     <select id="popupFolderSelect"></select>
+    <button class="folder-new-btn" id="popupNewFolderBtn">+</button>
   </div>
   <button id="selectBtn">选取导出</button>
   <button id="openCollectionBtn" class="secondary">查看收藏夹 <span class="collection-badge" id="collectionBadge">0</span></button>

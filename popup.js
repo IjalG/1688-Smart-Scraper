@@ -132,8 +132,27 @@ async function renderPopupFolders() {
     opt.textContent = f.name;
     select.appendChild(opt);
   });
-  document.getElementById('folderSelectWrap').style.display = 'block';
+  document.getElementById('folderSelectWrap').style.display = 'flex';
 }
+
+document.getElementById('popupNewFolderBtn').addEventListener('click', async () => {
+  const settings = window._cachedSettings || DEFAULT_SETTINGS;
+  const lang = settings.language || 'zh';
+  const name = prompt(lang === 'en' ? 'Enter folder name' : '请输入文件夹名称');
+  if (!name || !name.trim()) return;
+
+  const folders = await loadFolders();
+  if (folders.some(f => f.name === name.trim())) {
+    alert(lang === 'en' ? 'Folder already exists' : '文件夹已存在');
+    return;
+  }
+
+  const id = 'folder_' + Date.now();
+  folders.push({ id, name: name.trim() });
+  await chrome.storage.local.set({ folders: folders });
+  await renderPopupFolders();
+  document.getElementById('popupFolderSelect').value = id;
+});
 
 function t(key) {
   const settings = window._cachedSettings || DEFAULT_SETTINGS;
