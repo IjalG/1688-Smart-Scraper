@@ -629,9 +629,12 @@ document.getElementById('deleteFolderBtn').addEventListener('click', () => {
 });
 
 document.getElementById('exportBtn').addEventListener('click', async () => {
+  console.log('[select.js] exportBtn clicked');
   const selectedList = Array.from(selectedProducts)
     .sort((a, b) => a - b)
     .map(idx => currentProducts[idx]);
+
+  console.log('[select.js] selectedList:', selectedList.length, 'isCollectionMode:', isCollectionMode, 'currentLang:', currentLang);
 
   if (selectedList.length === 0) {
     alert(t('selectOne'));
@@ -647,6 +650,8 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     const exportFormat = settings.settings?.exportFormat || 'xlsx';
     const columns = settings.settings?.columns || {};
 
+    console.log('[select.js] sending export message, lang:', currentLang);
+
     if (isCollectionMode) {
       await chrome.runtime.sendMessage({
         action: 'exportFromCollection',
@@ -661,9 +666,10 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
       });
     }
 
+    console.log('[select.js] export message sent successfully');
     window.close();
   } catch (error) {
-    console.error(error);
+    console.error('[select.js] export error:', error);
     alert(t('exportFailed'));
     exportBtn.disabled = false;
     exportBtn.textContent = t('exportSelected');
