@@ -2,6 +2,34 @@ let currentProducts = [];
 let selectedProducts = new Set();
 let currentTabId = null;
 let focusedIndex = -1;
+
+function normalizeImageUrl(url) {
+  let imageUrl = String(url || '').trim();
+  if (!imageUrl) return '';
+  if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+  if (imageUrl.startsWith('http://')) imageUrl = 'https://' + imageUrl.slice(7);
+
+  let suffix = '';
+  const qIndex = imageUrl.search(/[?#]/);
+  if (qIndex >= 0) {
+    suffix = imageUrl.slice(qIndex);
+    imageUrl = imageUrl.slice(0, qIndex);
+  }
+
+  // 与 content/background 保持一致：去掉 alicdn 尺寸/转码后缀
+  imageUrl = imageUrl.replace(/(\.(?:jpe?g|png|gif|bmp))(?:[._].+)?$/i, '$1');
+  return imageUrl + suffix;
+}
+
+function escapeAttr(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+
 let filterState = { search: '', priceMin: '', priceMax: '' };
 let isCollectionMode = false;
 let currentLang = 'zh';
@@ -67,7 +95,6 @@ const I18N = {
     keyNavigate: '切换',
     keyPreview: '预览',
     keyDelete: '删除',
-    salesLabel: '销量',
     noProducts: '未找到商品数据',
     missingParam: '缺少参数',
     collectionEmpty: '收藏夹为空',
@@ -110,7 +137,6 @@ const I18N = {
     keyNavigate: 'navigate',
     keyPreview: 'preview',
     keyDelete: 'delete',
-    salesLabel: 'Sales',
     noProducts: 'No products found',
     missingParam: 'Missing parameter',
     collectionEmpty: 'Collection is empty',
@@ -195,21 +221,15 @@ async function init() {
   try {
     const params = new URLSearchParams(window.location.search);
     const mode = params.get('mode');
-    isCollectionMode = (mode === 'collection');
-
     currentLang = params.get('lang') || 'zh';
+    isCollectionMode = (mode === 'collection');
 
     applyI18n();
 
     if (isCollectionMode) {
       const result = await chrome.storage.local.get(['productCollection', 'folders']);
       currentProducts = result.productCollection || [];
-      const storedFolders = result.folders;
-      if (storedFolders && storedFolders.length > 0) {
-        folders = storedFolders;
-      } else {
-        folders = [{ id: 'default', name: currentLang === 'en' ? 'Default' : '默认' }];
-      }
+      folders = result.folders || [{ id: 'default', name: currentLang === 'en' ? 'Default' : '默认' }];
 
       if (currentProducts.length === 0) {
         throw new Error(t('collectionEmpty'));
@@ -351,16 +371,16 @@ function renderProductList(products) {
     item.className = 'product-item selected';
     item.dataset.index = index;
 
-    const deleteBtnHtml = isCollectionMode ? `<button class="delete-btn" data-index="${index}" title="${t('deleteFolder')}">✕</button>` : '';
+    const deleteBtnHtml = isCollectionMode ? `<button class="delete-btn" data-index="${index}" title="Delete">✕</button>` : '';
 
     item.innerHTML = `
       <input type="checkbox" checked data-index="${index}">
-      <img class="product-thumb" src="${product.图片链接 || ''}" alt="product" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23f5f5f5%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2212%22>no image</text></svg>'">
+      <img class="product-thumb" src="${escapeAttr(normalizeImageUrl(product.图片链接))}" alt="product" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23f5f5f5%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2212%22>no image</text></svg>'">
       <div class="product-info" data-link="${product.商品链接 || ''}">
-        <div class="product-title">${product.商品标题 || (currentLang === 'en' ? 'Unknown' : '未知')}</div>
+        <div class="product-title">${product.商品标题 || 'Unknown'}</div>
         <div class="product-meta">
-          <span class="product-price">${product.价格 || '-'}${currentLang === 'en' ? ' CNY' : '元'}</span>
-          <span style="margin-left: 8px;">${t('salesLabel')}: ${product.销量 || '0'}</span>
+          <span class="product-price">${product.价格 || '-'}元</span>
+          <span style="margin-left: 8px;">${currentLang === 'en' ? 'Sales' : '销量'}: ${product.销量 || '0'}</span>
         </div>
         <div class="product-shop">${product.店铺名称 || ''}</div>
       </div>
@@ -629,12 +649,15 @@ document.getElementById('deleteFolderBtn').addEventListener('click', () => {
 });
 
 document.getElementById('exportBtn').addEventListener('click', async () => {
-  console.log('[select.js] exportBtn clicked');
   const selectedList = Array.from(selectedProducts)
     .sort((a, b) => a - b)
-    .map(idx => currentProducts[idx]);
-
-  console.log('[select.js] selectedList:', selectedList.length, 'isCollectionMode:', isCollectionMode, 'currentLang:', currentLang);
+    .map(idx => {
+      const product = currentProducts[idx];
+      return {
+        ...product,
+        图片链接: normalizeImageUrl(product.图片链接)
+      };
+    });
 
   if (selectedList.length === 0) {
     alert(t('selectOne'));
@@ -648,28 +671,26 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
   try {
     const settings = await chrome.storage.sync.get('settings');
     const exportFormat = settings.settings?.exportFormat || 'xlsx';
-    const columns = settings.settings?.columns || {};
 
-    console.log('[select.js] sending export message, lang:', currentLang);
+    const columns = settings.settings?.columns;
+    const response = await chrome.runtime.sendMessage({
+      action: isCollectionMode ? 'exportFromCollection' : 'exportSelected',
+      products: selectedList,
+      options: {
+        exportFormat,
+        language: currentLang,
+        columns,
+        mode: isCollectionMode ? 'collection' : 'products'
+      }
+    });
 
-    if (isCollectionMode) {
-      await chrome.runtime.sendMessage({
-        action: 'exportFromCollection',
-        products: selectedList,
-        options: { exportFormat, language: currentLang, columns }
-      });
-    } else {
-      await chrome.tabs.sendMessage(currentTabId, {
-        action: 'exportSelected',
-        products: selectedList,
-        options: { exportFormat, language: currentLang, columns }
-      });
+    if (!response || !response.success) {
+      throw new Error(response?.message || t('exportFailed'));
     }
 
-    console.log('[select.js] export message sent successfully');
     window.close();
   } catch (error) {
-    console.error('[select.js] export error:', error);
+    console.error(error);
     alert(t('exportFailed'));
     exportBtn.disabled = false;
     exportBtn.textContent = t('exportSelected');

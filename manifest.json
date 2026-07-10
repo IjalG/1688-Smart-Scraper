@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "1688 智能选品助手",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "一键提取当前页商品数据，人工浏览，智能整理。专为1688采购商设计的轻量级浏览器插件。",
   "permissions": [
     "activeTab",
@@ -25,7 +25,6 @@
         "*://*.1688.com/*"
       ],
       "js": [
-        "exceljs.min.js",
         "content.js"
       ],
       "css": [
@@ -52,8 +51,13 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["select.html", "select.js"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "select.html",
+        "select.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

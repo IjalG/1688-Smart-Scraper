@@ -26,7 +26,13 @@
       ],
       image: [
         'img.main-img',
-        'img[class*="main-img"]'
+        'img[class*="main-img"]',
+        'img[class*="offer-img"]',
+        'img[class*="OfferImg"]',
+        '.mojar-element-image img',
+        '.offer-img-wrapper img',
+        'img[src*="alicdn.com"]',
+        'img[data-src*="alicdn.com"]'
       ],
       link: [
         'a[href*="offer"]',
@@ -110,24 +116,81 @@
     return '0';
   }
 
+  function isUsableImageUrl(url) {
+    const imageUrl = String(url || '').trim();
+    if (!imageUrl || imageUrl.length < 10) return false;
+    const lower = imageUrl.toLowerCase();
+    if (lower.startsWith('data:image/svg')) return false;
+    if (lower.includes('loading') || lower.includes('placeholder') || lower.includes('blank')) return false;
+    if (imageUrl === 'about:blank') return false;
+    return true;
+  }
+
+  function normalizeImageUrl(url) {
+    let imageUrl = String(url || '').trim();
+    if (!imageUrl) return '';
+    if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
+    if (imageUrl.startsWith('http://')) imageUrl = 'https://' + imageUrl.slice(7);
+
+    // 保留 query/hash，仅清理路径部分
+    let suffix = '';
+    const qIndex = imageUrl.search(/[?#]/);
+    if (qIndex >= 0) {
+      suffix = imageUrl.slice(qIndex);
+      imageUrl = imageUrl.slice(0, qIndex);
+    }
+
+    // 1688/alicdn 常见缩略图形态（保留第一个真实图片扩展名）:
+    // xxx.jpg_300x300q90.jpg_.webp
+    // xxx.jpg.jpg_.webp  ← 旧逻辑会误收成 xxx.jpg.jpg 并 404
+    // xxx.jpg_sum.jpg / xxx.png_b.jpg
+    imageUrl = imageUrl.replace(/(\.(?:jpe?g|png|gif|bmp))(?:[._].+)?$/i, '$1');
+    return imageUrl + suffix;
+  }
+
   function extractImageUrl(card) {
-    const imgElement = querySelectorFirst(card, CONFIG.selectors.image);
-    if (!imgElement) return '';
-    let imageUrl = imgElement.getAttribute('data-src') ||
-                   imgElement.getAttribute('data-lazy-src') ||
-                   imgElement.getAttribute('src') || '';
-    imageUrl = String(imageUrl || '');
-    if (!imageUrl || imageUrl.length < 10 ||
-        imageUrl.includes('loading') ||
-        imageUrl.includes('placeholder') ||
-        imageUrl.includes('blank') ||
-        imageUrl === 'about:blank') {
-      return '';
+    const candidates = [];
+    const pushCandidate = (value) => {
+      if (!value) return;
+      const normalized = normalizeImageUrl(value);
+      if (isUsableImageUrl(normalized)) candidates.push(normalized);
+    };
+
+    const imgElements = [];
+    for (const selector of CONFIG.selectors.image) {
+      try {
+        card.querySelectorAll(selector).forEach((el) => imgElements.push(el));
+      } catch (e) {}
     }
-    if (imageUrl.startsWith('//')) {
-      imageUrl = 'https:' + imageUrl;
+    if (imgElements.length === 0) {
+      card.querySelectorAll('img').forEach((el) => imgElements.push(el));
     }
-    return imageUrl;
+
+    for (const imgElement of imgElements) {
+      pushCandidate(imgElement.getAttribute('data-src'));
+      pushCandidate(imgElement.getAttribute('data-lazy-src'));
+      pushCandidate(imgElement.getAttribute('data-original'));
+      pushCandidate(imgElement.getAttribute('data-lazyload-src'));
+      pushCandidate(imgElement.currentSrc);
+      pushCandidate(imgElement.getAttribute('src'));
+
+      const srcset = imgElement.getAttribute('srcset') || imgElement.getAttribute('data-srcset');
+      if (srcset) {
+        const first = String(srcset).split(',')[0].trim().split(' ')[0];
+        pushCandidate(first);
+      }
+    }
+
+    // 背景图兜底
+    const bgNodes = card.querySelectorAll('[style*="background"]');
+    bgNodes.forEach((node) => {
+      const style = node.getAttribute('style') || '';
+      const match = style.match(/url\((['"]?)(.*?)\1\)/i);
+      if (match) pushCandidate(match[2]);
+    });
+
+    const preferred = candidates.find((url) => /alicdn\.com|cbu01\.alicdn\.com|img\.alicdn\.com/i.test(url));
+    return preferred || candidates[0] || '';
   }
 
   function extractLink(card) {
@@ -262,224 +325,26 @@
     }, 3000);
   }
 
-  async function imageToBase64(url) {
-    if (!url) return '';
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    } catch (e) {
-      console.warn('[1688智能选品助手] 图片转换失败:', url, e);
-      return '';
-    }
-  }
-
-  const I18N_EXPORT = {
-    zh: {
-      cols: { '序号': '序号', '图片': '图片', '商品标题': '商品标题', '价格': '价格(元)', '销量': '销量', '店铺名称': '店铺名称', '商品链接': '商品链接' },
-      title: '1688 商品数据',
-      exportTime: '导出时间',
-      productCount: '商品数量',
-      price: '价格',
-      sales: '销量',
-      shop: '店铺',
-      link: '链接',
-      viewProduct: '查看商品',
-      unknown: '未知商品',
-      yuan: '元',
-      attr: '属性',
-      value: '值'
-    },
-    en: {
-      cols: { '序号': 'No.', '图片': 'Image', '商品标题': 'Title', '价格': 'Price (CNY)', '销量': 'Sales', '店铺名称': 'Shop', '商品链接': 'Link' },
-      title: '1688 Product Data',
-      exportTime: 'Export Time',
-      productCount: 'Products',
-      price: 'Price',
-      sales: 'Sales',
-      shop: 'Shop',
-      link: 'Link',
-      viewProduct: 'View Product',
-      unknown: 'Unknown',
-      yuan: 'CNY',
-      attr: 'Attribute',
-      value: 'Value'
-    }
-  };
-
-  function getDict(lang) {
-    return I18N_EXPORT[lang] || I18N_EXPORT.zh;
-  }
-
-  async function generateXLSX(products, lang) {
-    const dict = getDict(lang);
-    console.log('[1688智能选品助手] 导出语言:', lang, dict);
-    console.log('[1688智能选品助手] 正在下载图片...');
-    const imagePromises = products.map(async (product, index) => {
-      if (product.图片链接 && CONFIG.columns['图片']) {
-        console.log(`[1688智能选品助手] 下载图片 ${index + 1}/${products.length}`);
-        const base64 = await imageToBase64(product.图片链接);
-        return { ...product, 图片base64: base64 };
-      }
-      return { ...product, 图片base64: '' };
-    });
-
-    const productsWithImages = await Promise.all(imagePromises);
-    console.log('[1688智能选品助手] 图片下载完成');
-
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = '1688 Smart Scraper';
-
-    const worksheet = workbook.addWorksheet('Products', {
-      views: [{ state: 'frozen', ySplit: 1 }]
-    });
-
-    const colHeaders = [];
-    const colKeys = [];
-    const colWidths = { '序号': 8, '图片': 15, '商品标题': 50, '价格': 12, '销量': 12, '店铺名称': 25, '商品链接': 40 };
-
-    ALL_COLUMNS.forEach(key => {
-      if (CONFIG.columns[key]) {
-        colHeaders.push(dict.cols[key]);
-        colKeys.push(key);
-      }
-    });
-
-    worksheet.columns = colHeaders.map((h, i) => ({
-      header: h,
-      key: colKeys[i],
-      width: colWidths[colKeys[i]] || 20
-    }));
-
-    const headerRow = worksheet.getRow(1);
-    headerRow.height = 25;
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    headerRow.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFFF6600' }
-    };
-    headerRow.alignment = { horizontal: 'left', vertical: 'middle' };
-
-    for (let i = 0; i < productsWithImages.length; i++) {
-      const product = productsWithImages[i];
-      const rowNum = i + 2;
-
-      const rowData = {};
-      colKeys.forEach(key => {
-        rowData[key] = product[key] || '';
-      });
-
-      const row = worksheet.addRow(rowData);
-      row.height = 65;
-
-      if (CONFIG.columns['图片'] && product.图片base64) {
-        try {
-          const base64Data = product.图片base64.split(',')[1];
-          const imageId = workbook.addImage({
-            base64: base64Data,
-            extension: product.图片base64.includes('image/png') ? 'png' : 'jpeg'
-          });
-
-          const imgColIdx = colKeys.indexOf('图片');
-          worksheet.addImage(imageId, {
-            tl: { col: imgColIdx, row: rowNum - 1 },
-            ext: { width: 60, height: 60 }
-          });
-        } catch (e) {
-          console.warn('[1688智能选品助手] 添加图片失败:', e);
-        }
-      }
-
-      colKeys.forEach(key => {
-        const cell = row.getCell(key);
-        if (key === '商品标题') {
-          cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-        } else {
-          cell.alignment = { horizontal: 'left', vertical: 'middle' };
-        }
-      });
-    }
-
-    return await workbook.xlsx.writeBuffer();
-  }
-
-  function generateMarkdown(products, lang) {
-    const dict = getDict(lang);
-    const locale = lang === 'en' ? 'en-US' : 'zh-CN';
-    let md = `# ${dict.title}\n\n`;
-    md += `> ${dict.exportTime}: ${new Date().toLocaleString(locale)}\n`;
-    md += `> ${dict.productCount}: ${products.length}\n\n`;
-    md += '---\n\n';
-
-    for (const product of products) {
-      md += `## ${product.序号}. ${product.商品标题 || dict.unknown}\n\n`;
-
-      if (CONFIG.columns['图片'] && product.图片链接) {
-        md += `![Product](${product.图片链接})\n\n`;
-      }
-
-      md += `| ${dict.attr} | ${dict.value} |\n`;
-      md += '| --- | --- |\n';
-      if (CONFIG.columns['价格']) md += `| ${dict.price} | ${product.价格 || '-'} ${dict.yuan} |\n`;
-      if (CONFIG.columns['销量']) md += `| ${dict.sales} | ${product.销量 || '0'} |\n`;
-      if (CONFIG.columns['店铺名称']) md += `| ${dict.shop} | ${product.店铺名称 || '-'} |\n`;
-      if (CONFIG.columns['商品链接'] && product.商品链接) {
-        md += `| ${dict.link} | [${dict.viewProduct}](${product.商品链接}) |\n`;
-      }
-      md += '\n---\n\n';
-    }
-
-    return md;
-  }
-
-  function downloadFile(content, filename, mimeType) {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
   async function exportSelectedProducts(products, options = {}) {
     const exportFormat = options.exportFormat || 'xlsx';
     const lang = options.language || 'zh';
-    if (options.columns) {
-      Object.keys(options.columns).forEach(key => {
-        CONFIG.columns[key] = options.columns[key];
-      });
-    }
 
     showNotification(lang === 'en' ? `Exporting ${products.length} products...` : `正在导出 ${products.length} 个商品...`, 'info');
 
     try {
-      const now = new Date();
-      const dateStr = now.getFullYear().toString() +
-        (now.getMonth() + 1).toString().padStart(2, '0') +
-        now.getDate().toString().padStart(2, '0');
-      const timeStr = now.getHours().toString().padStart(2, '0') +
-        now.getMinutes().toString().padStart(2, '0');
+      // 交由 background service worker 下载图片并生成文件，避免页面 CORS 限制
+      const result = await chrome.runtime.sendMessage({
+        action: 'exportSelected',
+        products,
+        options: {
+          exportFormat,
+          language: lang,
+          columns: CONFIG.columns
+        }
+      });
 
-      const productsWithIndex = products.map((p, i) => ({ ...p, 序号: i + 1 }));
-
-      if (exportFormat === 'xlsx') {
-        showNotification(lang === 'en' ? `Downloading ${products.length} images...` : `正在下载 ${products.length} 个商品图片...`, 'info');
-        const buffer = await generateXLSX(productsWithIndex, lang);
-        const filename = `1688_products_${dateStr}_${timeStr}.xlsx`;
-        downloadFile(buffer, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      } else {
-        const markdown = generateMarkdown(productsWithIndex, lang);
-        const filename = `1688_products_${dateStr}_${timeStr}.md`;
-        downloadFile(markdown, filename, 'text/markdown;charset=utf-8');
+      if (!result || !result.success) {
+        throw new Error(result?.message || (lang === 'en' ? 'Export failed' : '导出失败'));
       }
 
       showNotification(lang === 'en' ? `Successfully exported ${products.length} products!` : `成功导出 ${products.length} 个商品！`, 'success');
@@ -498,9 +363,7 @@
       CONFIG.filterAds = options.filterAds !== false;
       CONFIG.exportFormat = options.exportFormat || 'xlsx';
       if (options.columns) {
-        Object.keys(options.columns).forEach(key => {
-          CONFIG.columns[key] = options.columns[key];
-        });
+        CONFIG.columns = { ...DEFAULT_COLUMNS, ...options.columns };
       }
       const products = extractProducts();
       sendResponse({ success: true, products: products });
