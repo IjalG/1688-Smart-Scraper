@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "1688 智能选品助手",
-  "version": "1.6.2",
-  "description": "一键提取当前页商品数据，人工浏览，智能整理。专为1688采购商设计的轻量级浏览器插件。",
+  "version": "1.7.0",
+  "description": "人工浏览 + 人工筛选 + 一键整理采购清单。支持选择页改价换图、导出进度与图片尺寸配置。",
   "permissions": [
     "activeTab",
     "scripting",

@@ -10,12 +10,19 @@ const I18N = {
     loading: '正在加载...',
     noProducts: '未找到商品数据',
     addedToCollection: '已添加 {count} 个商品到收藏夹',
+    addedWithSkipped: '已添加 {added} 个，跳过重复 {skipped} 个',
+    allDuplicates: '没有新商品，{skipped} 个均为重复',
+    qualityWarning: '已提取商品，但部分字段可能不完整',
     refreshRetry: '请刷新1688页面后重试',
     collectionEmpty: '收藏夹为空，请先添加商品',
     settingsSaved: '设置已保存',
     exportFormat: '导出格式',
     maxProducts: '抓取数量 (0 = 全部)',
     filterAds: '过滤广告商品',
+    imageSize: 'Excel 图片尺寸',
+    imageSizeSmall: '小 (80px)',
+    imageSizeMedium: '中 (120px)',
+    imageSizeLarge: '大 (160px)',
     exportColumns: '导出字段',
     save: '保存',
     cancel: '取消',
@@ -39,12 +46,19 @@ const I18N = {
     loading: 'Loading...',
     noProducts: 'No products found',
     addedToCollection: 'Added {count} products to collection',
+    addedWithSkipped: 'Added {added}, skipped {skipped} duplicates',
+    allDuplicates: 'No new products, {skipped} already in collection',
+    qualityWarning: 'Products extracted, but some fields may be incomplete',
     refreshRetry: 'Please refresh the 1688 page and try again',
     collectionEmpty: 'Collection is empty, add products first',
     settingsSaved: 'Settings saved',
     exportFormat: 'Export Format',
     maxProducts: 'Max Products (0 = all)',
     filterAds: 'Filter Ad Products',
+    imageSize: 'Excel Image Size',
+    imageSizeSmall: 'Small (80px)',
+    imageSizeMedium: 'Medium (120px)',
+    imageSizeLarge: 'Large (160px)',
     exportColumns: 'Export Columns',
     save: 'Save',
     cancel: 'Cancel',
@@ -65,6 +79,7 @@ const DEFAULT_SETTINGS = {
   exportFormat: 'xlsx',
   maxProducts: 0,
   filterAds: true,
+  imageSize: 120,
   columns: { '序号': true, '图片': true, '商品标题': true, '价格': true, '销量': true, '店铺名称': true, '商品链接': true },
   language: 'zh'
 };
@@ -153,6 +168,15 @@ function applyLanguage() {
   document.querySelector('#maxProducts').previousElementSibling.textContent = t('maxProducts');
   document.querySelector('#filterAds').parentElement.lastChild.textContent = ' ' + t('filterAds');
 
+  const imageSizeLabel = document.querySelector('#imageSize')?.previousElementSibling;
+  if (imageSizeLabel) imageSizeLabel.textContent = t('imageSize');
+  const imageSizeSelect = document.getElementById('imageSize');
+  if (imageSizeSelect && imageSizeSelect.options.length >= 3) {
+    imageSizeSelect.options[0].textContent = t('imageSizeSmall');
+    imageSizeSelect.options[1].textContent = t('imageSizeMedium');
+    imageSizeSelect.options[2].textContent = t('imageSizeLarge');
+  }
+
   document.querySelectorAll('.column-grid label')[0].lastChild.textContent = ' ' + t('cols')['序号'];
   document.querySelectorAll('.column-grid label')[1].lastChild.textContent = ' ' + t('cols')['图片'];
   document.querySelectorAll('.column-grid label')[2].lastChild.textContent = ' ' + t('cols')['商品标题'];
@@ -182,6 +206,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('exportFormat').value = settings.exportFormat;
   document.getElementById('maxProducts').value = settings.maxProducts;
   document.getElementById('filterAds').checked = settings.filterAds;
+  const imageSizeEl = document.getElementById('imageSize');
+  if (imageSizeEl) imageSizeEl.value = String(settings.imageSize || 120);
 
   ALL_COLUMNS.forEach(col => {
     const cb = document.getElementById('col_' + col);
@@ -232,35 +258,53 @@ document.getElementById('addToCollectionBtn').addEventListener('click', async ()
       options: { exportFormat: settings.exportFormat, maxProducts: settings.maxProducts, filterAds: settings.filterAds }
     });
 
-    if (response && response.success && response.products.length > 0) {
+    if (response && response.success && response.products && response.products.length > 0) {
       const result = await chrome.storage.local.get(['productCollection', 'folders']);
       const collection = result.productCollection || [];
       const folders = result.folders || [{ id: 'default', name: settings.language === 'en' ? 'Default' : '默认' }];
 
       const existingIds = new Set();
-      collection.forEach(p => { if (p._offerId) existingIds.add(p._offerId); });
+      collection.forEach(p => {
+        if (p._offerId) existingIds.add(String(p._offerId));
+      });
 
       let addedCount = 0;
+      let skippedCount = 0;
       const targetFolder = document.getElementById('popupFolderSelect').value || 'default';
       response.products.forEach(p => {
         const match = (p.商品链接 || '').match(/offer[=/](\d+)/);
-        const offerId = match ? match[1] : null;
-        if (offerId && !existingIds.has(offerId)) {
-          collection.push({ ...p, _offerId: offerId, folder: targetFolder });
-          existingIds.add(offerId);
+        const offerId = p._offerId || (match ? match[1] : null);
+        if (offerId && existingIds.has(String(offerId))) {
+          skippedCount++;
+          return;
+        }
+        if (offerId) {
+          collection.push({ ...p, _offerId: String(offerId), folder: targetFolder });
+          existingIds.add(String(offerId));
           addedCount++;
-        } else if (!offerId) {
+        } else {
           collection.push({ ...p, folder: targetFolder });
           addedCount++;
         }
       });
 
       await chrome.storage.local.set({ productCollection: collection, folders: folders });
-      status.textContent = t('addedToCollection').replace('{count}', addedCount);
+      if (addedCount === 0 && skippedCount > 0) {
+        status.textContent = t('allDuplicates').replace('{skipped}', skippedCount);
+      } else if (skippedCount > 0) {
+        status.textContent = t('addedWithSkipped')
+          .replace('{added}', addedCount)
+          .replace('{skipped}', skippedCount);
+      } else {
+        status.textContent = t('addedToCollection').replace('{count}', addedCount);
+      }
+      if (response.quality && response.quality.ok === false) {
+        status.textContent += ' · ' + (response.message || t('qualityWarning'));
+      }
       status.className = 'status';
       updateCollectionBadge();
     } else {
-      status.textContent = t('noProducts');
+      status.textContent = (response && response.message) || t('noProducts');
       status.className = 'status error';
     }
   } catch (error) {
@@ -333,10 +377,14 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     columns[col] = cb ? cb.checked : true;
   });
 
+  const imageSizeRaw = parseInt(document.getElementById('imageSize')?.value || '120', 10);
+  const imageSize = [80, 120, 160].includes(imageSizeRaw) ? imageSizeRaw : 120;
+
   const settings = {
     exportFormat: document.getElementById('exportFormat').value,
     maxProducts: parseInt(document.getElementById('maxProducts').value) || 0,
     filterAds: document.getElementById('filterAds').checked,
+    imageSize,
     columns: columns,
     language: document.getElementById('language').value || 'zh'
   };
@@ -357,6 +405,8 @@ document.getElementById('cancelSettingsBtn').addEventListener('click', async () 
   document.getElementById('exportFormat').value = settings.exportFormat;
   document.getElementById('maxProducts').value = settings.maxProducts;
   document.getElementById('filterAds').checked = settings.filterAds;
+  const imageSizeEl = document.getElementById('imageSize');
+  if (imageSizeEl) imageSizeEl.value = String(settings.imageSize || 120);
   document.getElementById('language').value = settings.language || 'zh';
 
   ALL_COLUMNS.forEach(col => {

@@ -19,8 +19,8 @@ body {
   height: 100%;
 }
 .left-panel {
-  width: 380px;
-  min-width: 250px;
+  width: 420px;
+  min-width: 300px;
   max-width: 70%;
   background: #fff;
   display: flex;
@@ -233,14 +233,99 @@ body {
   height: 16px;
   cursor: pointer;
 }
-.product-thumb {
-  width: 70px;
-  height: 70px;
-  object-fit: cover;
-  border-radius: 6px;
+.product-thumb-wrap {
+  position: relative;
+  width: 96px;
+  height: 96px;
   margin-right: 12px;
   flex-shrink: 0;
+}
+.product-thumb {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 6px;
   background: #f5f5f5;
+  display: block;
+  border: 1px dashed transparent;
+}
+.product-thumb-wrap.drag-over .product-thumb {
+  border-color: #ff6600;
+  box-shadow: 0 0 0 2px rgba(255,102,0,0.15);
+}
+.product-thumb-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+  color: #fff;
+  background: rgba(0,0,0,0.55);
+  border-radius: 0 0 6px 6px;
+  padding: 2px 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.product-thumb-wrap:hover .product-thumb-tip {
+  opacity: 1;
+}
+.price-input {
+  width: 78px;
+  padding: 2px 6px;
+  border: 1px solid #ffd0b5;
+  border-radius: 4px;
+  color: #ff6600;
+  font-weight: bold;
+  font-size: 13px;
+  background: #fff;
+  outline: none;
+}
+.price-input:focus {
+  border-color: #ff6600;
+  box-shadow: 0 0 0 2px rgba(255,102,0,0.12);
+}
+.price-unit {
+  color: #ff6600;
+  font-size: 12px;
+  margin-left: 2px;
+}
+.export-progress {
+  display: none;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+}
+.export-progress.active {
+  display: block;
+}
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 140px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 6px 0;
+  display: none;
+}
+.context-menu button {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+}
+.context-menu button:hover {
+  background: #fff5ef;
+  color: #ff6600;
 }
 .product-info {
   flex: 1;
@@ -465,6 +550,7 @@ body {
     
     <div class="footer">
       <button id="exportBtn" data-i18n="exportSelected">Export Selected</button>
+      <div class="export-progress" id="exportProgress"></div>
     </div>
   </div>
   
@@ -486,5 +572,11 @@ body {
 </div>
 
 <script src="select.js"></script>
+
+<div class="context-menu" id="imageContextMenu">
+  <button type="button" id="ctxReplaceImage">替换图片</button>
+  <button type="button" id="ctxOpenImage">查看图片</button>
+</div>
+<input type="file" id="imageFileInput" accept="image/*" style="display:none">
 </body>
 </html>

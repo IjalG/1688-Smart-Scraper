@@ -22,7 +22,12 @@
       productCards: [
         '.search-offer-wrapper:not(.cardui-adOffer)',
         '[class*="search-offer-wrapper"]:not([class*="adOffer"])',
-        '[data-renderkey]'
+        '[data-renderkey]',
+        '.offer-list-row',
+        '.sm-offer-item',
+        '[class*="offer-item"]',
+        '[class*="OfferItem"]',
+        '[class*="gallery-offer"]'
       ],
       image: [
         'img.main-img',
@@ -32,24 +37,30 @@
         '.mojar-element-image img',
         '.offer-img-wrapper img',
         'img[src*="alicdn.com"]',
-        'img[data-src*="alicdn.com"]'
+        'img[data-src*="alicdn.com"]',
+        'img[data-lazy-src*="alicdn.com"]'
       ],
       link: [
+        'a[href*="detail.1688.com/offer"]',
+        'a[href*="offerId="]',
         'a[href*="offer"]',
         'a[href*="1688.com"]',
         'a'
       ],
       title: [
-        '.offer-title',
         '.title-text',
+        '.offer-title',
         '[class*="title-text"]',
         '[class*="TitleText"]',
+        '[class*="offer-title"]',
         'a[title]'
       ],
       shop: [
         '.desc-text',
         '.offer-desc-item .desc-text',
-        '[class*="desc-text"]'
+        '[class*="desc-text"]',
+        '[class*="shop-name"]',
+        '[class*="company-name"]'
       ],
       adMarkers: [
         '.cardui-adOffer',
@@ -69,16 +80,6 @@
     return null;
   }
 
-  function querySelectorAllFirst(container, selectors) {
-    for (const selector of selectors) {
-      try {
-        const elements = container.querySelectorAll(selector);
-        if (elements.length > 0) return elements;
-      } catch (e) {}
-    }
-    return [];
-  }
-
   function cleanText(text) {
     if (!text) return '';
     return String(text).replace(/[\s\n\r\t]+/g, ' ').trim();
@@ -86,7 +87,8 @@
 
   function isAdCard(card) {
     const className = card.className || '';
-    if (className.includes('adOffer') || className.includes('ad-offer') || className.includes('AdOffer')) {
+    if (typeof className === 'string' &&
+      (className.includes('adOffer') || className.includes('ad-offer') || className.includes('AdOffer'))) {
       return true;
     }
     for (const selector of CONFIG.selectors.adMarkers) {
@@ -98,20 +100,88 @@
     return false;
   }
 
+  function cleanPrice(value) {
+    if (value == null) return '';
+    const text = cleanText(String(value));
+    if (!text) return '';
+    const match = text.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+    return match ? match[1] : '';
+  }
+
+  function cleanSales(value) {
+    if (value == null) return '0';
+    let text = cleanText(String(value));
+    if (!text) return '0';
+
+    text = text.replace(/已售|成交|销量|付款|人付款|件|＋|\+/gi, '').trim();
+    const match = text.match(/([\d.]+)\s*([万千百wWkK]?)/);
+    if (!match) {
+      const plain = text.match(/[\d.]+/);
+      return plain ? plain[0] : '0';
+    }
+
+    let num = parseFloat(match[1]);
+    if (Number.isNaN(num)) return '0';
+    const unit = (match[2] || '').toLowerCase();
+    if (unit === '万' || unit === 'w') num *= 10000;
+    else if (unit === '千') num *= 1000;
+    else if (unit === '百') num *= 100;
+    else if (unit === 'k') num *= 1000;
+
+    if (num >= 10000) {
+      const v = num / 10000;
+      return (Math.round(v * 10) / 10) + '万';
+    }
+    if (Number.isInteger(num)) return String(num);
+    return String(Math.round(num * 10) / 10);
+  }
+
   function extractPrice(card) {
-    const priceItem = card.querySelector('.price-item');
-    if (priceItem) {
-      const match = priceItem.textContent.match(/[\d,.]+/);
-      return match ? match[0] : '';
+    const selectors = [
+      '.price-item',
+      '[class*="price-item"]',
+      '[class*="price"]',
+      '[class*="Price"]',
+      'span',
+      'div'
+    ];
+    for (const selector of selectors) {
+      try {
+        const nodes = card.querySelectorAll(selector);
+        for (const node of nodes) {
+          const text = cleanText(node.textContent);
+          if (!text || text.length > 30) continue;
+          if (!/[¥￥]|元|\d/.test(text)) continue;
+          if (!/\d/.test(text)) continue;
+          // 避免把销量等字段误识别成价格
+          if (/成交|已售|销量|人付款/.test(text) && !/[¥￥]/.test(text)) continue;
+          const price = cleanPrice(text);
+          if (price) return price;
+        }
+      } catch (e) {}
     }
     return '';
   }
 
   function extractSales(card) {
-    const salesEl = card.querySelector('.col-desc_after');
-    if (salesEl) {
-      const match = salesEl.textContent.match(/[\d.]+\s*[万千百]?/);
-      return match ? match[0].trim() : '0';
+    const selectors = [
+      '.col-desc_after',
+      '[class*="sale"]',
+      '[class*="Sold"]',
+      '[class*="deal"]',
+      'span',
+      'div'
+    ];
+    for (const selector of selectors) {
+      try {
+        const nodes = card.querySelectorAll(selector);
+        for (const node of nodes) {
+          const text = cleanText(node.textContent);
+          if (!text || text.length > 24) continue;
+          if (!/(成交|已售|销量|人付款|付款)/.test(text)) continue;
+          return cleanSales(text);
+        }
+      } catch (e) {}
     }
     return '0';
   }
@@ -132,7 +202,6 @@
     if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
     if (imageUrl.startsWith('http://')) imageUrl = 'https://' + imageUrl.slice(7);
 
-    // 保留 query/hash，仅清理路径部分
     let suffix = '';
     const qIndex = imageUrl.search(/[?#]/);
     if (qIndex >= 0) {
@@ -140,10 +209,7 @@
       imageUrl = imageUrl.slice(0, qIndex);
     }
 
-    // 1688/alicdn 常见缩略图形态（保留第一个真实图片扩展名）:
-    // xxx.jpg_300x300q90.jpg_.webp
-    // xxx.jpg.jpg_.webp  ← 旧逻辑会误收成 xxx.jpg.jpg 并 404
-    // xxx.jpg_sum.jpg / xxx.png_b.jpg
+    // 1688/alicdn 常见缩略图形态（保留第一个真实图片扩展名）
     imageUrl = imageUrl.replace(/(\.(?:jpe?g|png|gif|bmp))(?:[._].+)?$/i, '$1');
     return imageUrl + suffix;
   }
@@ -181,7 +247,6 @@
       }
     }
 
-    // 背景图兜底
     const bgNodes = card.querySelectorAll('[style*="background"]');
     bgNodes.forEach((node) => {
       const style = node.getAttribute('style') || '';
@@ -193,17 +258,29 @@
     return preferred || candidates[0] || '';
   }
 
+  function extractOfferIdFromHref(href) {
+    if (!href) return '';
+    const text = String(href);
+    let match = text.match(/offer\/(\d+)\.html/i);
+    if (match) return match[1];
+    match = text.match(/offerId=(\d+)/i);
+    if (match) return match[1];
+    match = text.match(/[?&]offer[=/](\d+)/i);
+    if (match) return match[1];
+    return '';
+  }
+
   function extractLink(card) {
     const allLinks = card.querySelectorAll('a[href]');
     let offerId = null;
 
     for (const link of allLinks) {
       const href = link.href || '';
-      const offerIdMatch = href.match(/offerId=(\d+)/);
-      if (offerIdMatch) {
-        offerId = offerIdMatch[1];
+      const id = extractOfferIdFromHref(href);
+      if (id) {
+        offerId = id;
         if (!href.includes('similar_search') && !href.includes('air.1688.com')) {
-          if (href.includes('detail.1688.com')) return href;
+          if (href.includes('detail.1688.com')) return href.split('?')[0];
         }
       }
     }
@@ -213,25 +290,25 @@
     for (const link of allLinks) {
       const href = link.href || '';
       if (href.includes('detail.1688.com/offer/') && !href.includes('similar_search')) {
-        return href;
+        return href.split('?')[0];
       }
     }
     return '';
   }
 
   function extractTitle(card) {
-    let titleEl = card.querySelector('.title-text');
-    if (titleEl) return cleanText(titleEl.textContent);
-
-    titleEl = card.querySelector('.offer-title');
-    if (titleEl) return cleanText(titleEl.textContent);
-
-    titleEl = card.querySelector('.offer-title-row');
-    if (titleEl) return cleanText(titleEl.textContent);
-
-    const linkEl = card.querySelector('a[title]');
-    if (linkEl && linkEl.title && !linkEl.title.includes('旺旺')) {
-      return cleanText(linkEl.title);
+    for (const selector of CONFIG.selectors.title) {
+      try {
+        const titleEl = card.querySelector(selector);
+        if (!titleEl) continue;
+        if (selector === 'a[title]') {
+          const title = cleanText(titleEl.title || '');
+          if (title && !title.includes('旺旺')) return title;
+          continue;
+        }
+        const text = cleanText(titleEl.textContent);
+        if (text && text.length > 2 && !text.includes('旺旺')) return text;
+      } catch (e) {}
     }
 
     const imgElement = querySelectorFirst(card, CONFIG.selectors.image);
@@ -240,7 +317,7 @@
       if (alt) return cleanText(alt);
     }
 
-    titleEl = card.querySelector('[class*="title"]');
+    const titleEl = card.querySelector('[class*="title"]');
     if (titleEl) {
       const text = cleanText(titleEl.textContent);
       if (text && text.length > 3 && !text.includes('旺旺')) return text;
@@ -252,12 +329,23 @@
     const shopLink = card.querySelector('.offer-shop-row .offer-desc-item[href*=".1688.com"]');
     if (shopLink) {
       const textEl = shopLink.querySelector('.desc-text');
-      return textEl ? cleanText(textEl.textContent) : '';
+      return textEl ? cleanText(textEl.textContent) : cleanText(shopLink.textContent);
+    }
+
+    for (const selector of CONFIG.selectors.shop) {
+      try {
+        const el = card.querySelector(selector);
+        if (!el) continue;
+        const text = cleanText(el.textContent);
+        if (text && text.length > 1 && text.length < 80) return text;
+      } catch (e) {}
     }
     return '';
   }
 
   function extractProductData(card, index) {
+    const link = extractLink(card);
+    const offerId = extractOfferIdFromHref(link);
     return {
       序号: index + 1,
       商品标题: extractTitle(card),
@@ -265,18 +353,130 @@
       销量: extractSales(card),
       店铺名称: extractShopName(card),
       图片链接: extractImageUrl(card),
-      商品链接: extractLink(card)
+      商品链接: link,
+      _offerId: offerId || undefined
     };
   }
 
-  function findProductCards() {
+  function findProductCardsBySelectors() {
     for (const selector of CONFIG.selectors.productCards) {
       try {
         const cards = document.querySelectorAll(selector);
-        if (cards.length > 0) return cards;
+        if (cards.length > 0) return Array.from(cards);
       } catch (e) {}
     }
     return [];
+  }
+
+  function scoreCardElement(el) {
+    if (!el || el.closest('script, style, noscript')) return -1;
+    const text = cleanText(el.textContent || '');
+    if (text.length < 8 || text.length > 2000) return -1;
+
+    let score = 0;
+    const hasOfferLink = !!el.querySelector('a[href*="detail.1688.com/offer"], a[href*="offerId="]');
+    const hasImage = !!el.querySelector('img[src*="alicdn"], img[data-src*="alicdn"], img');
+    const hasPriceLike = /[¥￥]\s*\d|\d+(\.\d+)?\s*元/.test(text);
+
+    if (hasOfferLink) score += 4;
+    if (hasImage) score += 2;
+    if (hasPriceLike) score += 2;
+    if (/(成交|已售|销量)/.test(text)) score += 1;
+    return score;
+  }
+
+  function findProductCardsHeuristic() {
+    const anchors = Array.from(document.querySelectorAll('a[href*="detail.1688.com/offer"], a[href*="offerId="]'));
+    const scored = new Map();
+
+    anchors.forEach((anchor) => {
+      let node = anchor;
+      for (let depth = 0; depth < 6 && node; depth++) {
+        node = node.parentElement;
+        if (!node || node === document.body || node === document.documentElement) break;
+        const score = scoreCardElement(node);
+        if (score < 5) continue;
+        const prev = scored.get(node) || 0;
+        if (score > prev) scored.set(node, score);
+      }
+    });
+
+    const cards = Array.from(scored.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([el]) => el)
+      .filter((el, idx, arr) => !arr.some((other, j) => j !== idx && other.contains(el)));
+
+    return cards;
+  }
+
+  function findProductCards() {
+    const bySelector = findProductCardsBySelectors();
+    if (bySelector.length > 0) return bySelector;
+    return findProductCardsHeuristic();
+  }
+
+  function scoreProduct(product) {
+    let score = 0;
+    if (product.商品标题) score += 2;
+    if (product.价格) score += 2;
+    if (product.图片链接) score += 2;
+    if (product.商品链接) score += 2;
+    if (product.店铺名称) score += 1;
+    if (product.销量 && product.销量 !== '0') score += 1;
+    return score;
+  }
+
+  function dedupeProducts(products) {
+    const result = [];
+    const seen = new Set();
+    for (const product of products) {
+      const offerId = product._offerId || extractOfferIdFromHref(product.商品链接);
+      const key = offerId
+        ? `id:${offerId}`
+        : `t:${product.商品标题 || ''}|p:${product.价格 || ''}|s:${product.店铺名称 || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (offerId) product._offerId = offerId;
+      result.push(product);
+    }
+    return result;
+  }
+
+  function buildQualityReport(products, cardCount) {
+    const total = products.length;
+    if (total === 0) {
+      return {
+        ok: false,
+        total: 0,
+        cardCount,
+        score: 0,
+        missing: { title: 0, price: 0, image: 0, link: 0 },
+        message: cardCount > 0
+          ? '检测到疑似商品卡片，但未能提取有效字段，页面结构可能已更新'
+          : '未找到商品卡片，请确认当前是 1688 搜索结果页，并向下滚动加载商品'
+      };
+    }
+
+    const missing = {
+      title: products.filter((p) => !p.商品标题).length,
+      price: products.filter((p) => !p.价格).length,
+      image: products.filter((p) => !p.图片链接).length,
+      link: products.filter((p) => !p.商品链接).length
+    };
+    const avgScore = products.reduce((sum, p) => sum + scoreProduct(p), 0) / total;
+    const missingRate = (missing.price + missing.image + missing.link) / (total * 3);
+    const ok = avgScore >= 4 && missingRate < 0.6;
+
+    return {
+      ok,
+      total,
+      cardCount,
+      score: Math.round(avgScore * 10) / 10,
+      missing,
+      message: ok
+        ? `成功提取 ${total} 个商品`
+        : `已提取 ${total} 个商品，但部分字段缺失较多（价格缺失 ${missing.price}，图片缺失 ${missing.image}）`
+    };
   }
 
   function extractProducts() {
@@ -292,21 +492,24 @@
       const card = productCards[i];
 
       if (CONFIG.filterAds && isAdCard(card)) {
-        console.log(`[1688智能选品助手] 跳过广告卡片 #${i}`);
         continue;
       }
 
       const productData = extractProductData(card, validCount);
-
-      if (productData.商品标题) {
-        console.log(`[1688智能选品助手] 提取商品 #${validCount}:`, productData.商品标题);
+      if (productData.商品标题 || productData.商品链接 || productData.图片链接) {
         products.push(productData);
         validCount++;
       }
     }
 
-    console.log(`[1688智能选品助手] 成功提取 ${products.length} 个有效商品`);
-    return products;
+    const deduped = dedupeProducts(products).map((item, index) => ({
+      ...item,
+      序号: index + 1
+    }));
+
+    const quality = buildQualityReport(deduped, productCards.length);
+    console.log('[1688智能选品助手] 提取完成:', quality);
+    return { products: deduped, quality };
   }
 
   function showNotification(message, type = 'info') {
@@ -332,7 +535,6 @@
     showNotification(lang === 'en' ? `Exporting ${products.length} products...` : `正在导出 ${products.length} 个商品...`, 'info');
 
     try {
-      // 交由 background service worker 下载图片并生成文件，避免页面 CORS 限制
       const result = await chrome.runtime.sendMessage({
         action: 'exportSelected',
         products,
@@ -365,13 +567,28 @@
       if (options.columns) {
         CONFIG.columns = { ...DEFAULT_COLUMNS, ...options.columns };
       }
-      const products = extractProducts();
-      sendResponse({ success: true, products: products });
+
+      try {
+        const { products, quality } = extractProducts();
+        sendResponse({
+          success: products.length > 0,
+          products,
+          quality,
+          message: quality.message
+        });
+      } catch (error) {
+        sendResponse({
+          success: false,
+          products: [],
+          quality: { ok: false, total: 0, message: error.message || String(error) },
+          message: error.message || String(error)
+        });
+      }
       return true;
     }
 
     if (request.action === 'exportSelected') {
-      exportSelectedProducts(request.products, request.options).then(result => {
+      exportSelectedProducts(request.products, request.options).then((result) => {
         sendResponse(result);
       });
       return true;

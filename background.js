@@ -11,6 +11,12 @@ const DEFAULT_COLUMNS = {
   '价格': true, '销量': true, '店铺名称': true, '商品链接': true
 };
 
+const IMAGE_SIZE_PRESETS = {
+  80: { px: 80, colWidth: 14, rowHeight: 72 },
+  120: { px: 120, colWidth: 22, rowHeight: 110 },
+  160: { px: 160, colWidth: 28, rowHeight: 145 }
+};
+
 const I18N = {
   zh: {
     cols: { '序号': '序号', '图片': '图片', '商品标题': '商品标题', '价格': '价格(元)', '销量': '销量', '店铺名称': '店铺名称', '商品链接': '商品链接' },
@@ -26,7 +32,8 @@ const I18N = {
     unknown: '未知商品',
     yuan: '元',
     attr: '属性',
-    value: '值'
+    value: '值',
+    noImage: '无图'
   },
   en: {
     cols: { '序号': 'No.', '图片': 'Image', '商品标题': 'Title', '价格': 'Price (CNY)', '销量': 'Sales', '店铺名称': 'Shop', '商品链接': 'Link' },
@@ -42,7 +49,8 @@ const I18N = {
     unknown: 'Unknown',
     yuan: 'CNY',
     attr: 'Attribute',
-    value: 'Value'
+    value: 'Value',
+    noImage: 'No image'
   }
 };
 
@@ -82,6 +90,8 @@ function guessImageExtension(url, contentType) {
   if (lowerUrl.includes('.png')) return 'png';
   if (lowerUrl.includes('.gif')) return 'gif';
   if (lowerUrl.includes('.webp')) return 'png';
+  if (lowerUrl.startsWith('data:image/png')) return 'png';
+  if (lowerUrl.startsWith('data:image/gif')) return 'gif';
   return 'jpeg';
 }
 
@@ -89,10 +99,13 @@ function normalizeImageUrl(url) {
   if (!url) return '';
   let imageUrl = String(url).trim();
   if (!imageUrl) return '';
+
+  // 用户拖入/粘贴的 data URL 直接保留
+  if (imageUrl.startsWith('data:image/')) return imageUrl;
+
   if (imageUrl.startsWith('//')) imageUrl = 'https:' + imageUrl;
   if (imageUrl.startsWith('http://')) imageUrl = 'https://' + imageUrl.slice(7);
 
-  // 保留 query/hash，仅清理路径部分
   let suffix = '';
   const qIndex = imageUrl.search(/[?#]/);
   if (qIndex >= 0) {
@@ -100,11 +113,6 @@ function normalizeImageUrl(url) {
     imageUrl = imageUrl.slice(0, qIndex);
   }
 
-  // alicdn 常见转码形态（保留第一个真实图片扩展名）:
-  // xxx.jpg_300x300q90.jpg_.webp
-  // xxx.jpg.jpg_.webp  ← 旧逻辑会误收成 xxx.jpg.jpg 并 404
-  // xxx.jpg_sum.jpg
-  // xxx.png_b.jpg
   imageUrl = imageUrl.replace(/(\.(?:jpe?g|png|gif|bmp))(?:[._].+)?$/i, '$1');
   return imageUrl + suffix;
 }
@@ -123,11 +131,14 @@ function buildImageCandidates(url) {
     if (!candidates.includes(next)) candidates.push(next);
   };
 
+  if (raw.startsWith('data:image/')) {
+    push(raw);
+    return candidates;
+  }
+
   const base = normalizeImageUrl(raw);
-  // 优先原图
   push(base);
 
-  // 常见可用尺寸回退（实测 200）
   if (base && /\.(jpe?g|png)$/i.test(base)) {
     push(base + '_300x300q90.jpg');
     push(base + '_300x300.jpg');
@@ -136,13 +147,26 @@ function buildImageCandidates(url) {
     push(base + '_.webp');
   }
 
-  // 最后再试原始 URL（可能已是可用缩略图）
   push(raw);
-
   return candidates;
 }
 
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    base64: match[2],
+    extension: guessImageExtension(dataUrl, match[1])
+  };
+}
+
 async function fetchImageAsBase64(imageUrl) {
+  if (String(imageUrl).startsWith('data:image/')) {
+    const parsed = parseDataUrl(imageUrl);
+    if (!parsed) throw new Error('Invalid data URL');
+    return parsed;
+  }
+
   const response = await fetch(imageUrl, {
     method: 'GET',
     credentials: 'omit',
@@ -189,13 +213,19 @@ async function imageToBase64(url) {
   return null;
 }
 
+function resolveImageSize(size) {
+  const key = Number(size) || 120;
+  return IMAGE_SIZE_PRESETS[key] || IMAGE_SIZE_PRESETS[120];
+}
+
 async function loadSettings() {
   const result = await chrome.storage.sync.get('settings');
   const settings = result.settings || {};
   return {
     exportFormat: settings.exportFormat || 'xlsx',
     columns: { ...DEFAULT_COLUMNS, ...(settings.columns || {}) },
-    language: settings.language || 'zh'
+    language: settings.language || 'zh',
+    imageSize: Number(settings.imageSize) || 120
   };
 }
 
@@ -237,8 +267,55 @@ async function downloadBlob(blob, filename) {
   throw new Error('Download API unavailable in service worker');
 }
 
-async function generateXLSX(products, columns, lang, title) {
+async function notifyProgress(tabId, payload) {
+  const message = {
+    action: 'exportProgress',
+    ...payload
+  };
+
+  // 选择页是扩展页面，tabs.sendMessage 只打到 content script；
+  // 这里同时走 runtime 广播，保证 select.html 能收到进度。
+  try {
+    await chrome.runtime.sendMessage(message);
+  } catch (e) {
+    // no other extension page listening
+  }
+
+  if (!tabId) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+  } catch (e) {
+    // content page may be closed; ignore
+  }
+}
+
+async function downloadImagesWithProgress(products, includeImages, tabId) {
+  if (!includeImages) {
+    return products.map(() => null);
+  }
+
+  const results = [];
+  const total = products.length;
+  for (let i = 0; i < total; i++) {
+    await notifyProgress(tabId, {
+      stage: 'image',
+      current: i + 1,
+      total,
+      message: `Downloading images ${i + 1}/${total}`
+    });
+    const product = products[i];
+    if (!product.图片链接) {
+      results.push(null);
+      continue;
+    }
+    results.push(await imageToBase64(product.图片链接));
+  }
+  return results;
+}
+
+async function generateXLSX(products, columns, lang, title, imageSize, tabId) {
   const dict = getDict(lang);
+  const size = resolveImageSize(imageSize);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = '1688 Smart Scraper';
   workbook.created = new Date();
@@ -250,7 +327,7 @@ async function generateXLSX(products, columns, lang, title) {
   const colKeys = ALL_COLUMNS.filter((key) => columns[key]);
   const colWidths = {
     '序号': 8,
-    '图片': 22,
+    '图片': size.colWidth,
     '商品标题': 50,
     '价格': 12,
     '销量': 12,
@@ -275,34 +352,44 @@ async function generateXLSX(products, columns, lang, title) {
   headerRow.alignment = { horizontal: 'left', vertical: 'middle' };
 
   const includeImages = !!columns['图片'];
-  const imageResults = includeImages
-    ? await Promise.all(products.map((product) => imageToBase64(product.图片链接)))
-    : products.map(() => null);
+  const imageResults = await downloadImagesWithProgress(products, includeImages, tabId);
+
+  await notifyProgress(tabId, {
+    stage: 'workbook',
+    current: products.length,
+    total: products.length,
+    message: 'Building workbook'
+  });
 
   for (let i = 0; i < products.length; i++) {
     const product = products[i];
     const rowNum = i + 2;
     const rowData = {};
+    const imageInfo = imageResults[i];
 
     colKeys.forEach((key) => {
-      // 图片列仅用于占位，实际图片通过 addImage 嵌入
-      rowData[key] = key === '图片' ? '' : (product[key] || '');
+      if (key === '图片') {
+        rowData[key] = imageInfo && imageInfo.base64 ? '' : (product.图片链接 ? dict.noImage : '');
+      } else {
+        rowData[key] = product[key] || '';
+      }
     });
 
     const row = worksheet.addRow(rowData);
-    // 行高与嵌入图片尺寸匹配（约 120px）
-    row.height = includeImages ? 110 : 28;
+    row.height = includeImages ? size.rowHeight : 28;
 
     colKeys.forEach((key) => {
       const cell = row.getCell(key);
       if (key === '商品标题') {
         cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      } else if (key === '图片' && !(imageInfo && imageInfo.base64)) {
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { color: { argb: 'FF999999' }, italic: true };
       } else {
         cell.alignment = { horizontal: 'left', vertical: 'middle' };
       }
     });
 
-    const imageInfo = imageResults[i];
     if (includeImages && imageInfo && imageInfo.base64) {
       try {
         const imageId = workbook.addImage({
@@ -311,19 +398,25 @@ async function generateXLSX(products, columns, lang, title) {
         });
         const imgColIdx = colKeys.indexOf('图片');
         if (imgColIdx >= 0) {
+          const pad = Math.max(0.08, (size.px > 120 ? 0.08 : 0.1));
           worksheet.addImage(imageId, {
-            tl: { col: imgColIdx + 0.1, row: rowNum - 1 + 0.1 },
-            ext: { width: 120, height: 120 },
+            tl: { col: imgColIdx + pad, row: rowNum - 1 + pad },
+            ext: { width: size.px, height: size.px },
             editAs: 'oneCell'
           });
         }
       } catch (error) {
         console.warn('[1688 Smart Scraper] Failed to embed image:', error);
+        const imgCell = row.getCell('图片');
+        if (imgCell) {
+          imgCell.value = dict.noImage;
+          imgCell.font = { color: { argb: 'FF999999' }, italic: true };
+          imgCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
       }
     }
   }
 
-  // title 目前仅用于语义区分，Excel 表头已按语言生成
   void title;
   return workbook.xlsx.writeBuffer();
 }
@@ -340,6 +433,8 @@ function generateMarkdown(products, columns, lang, title) {
     md += `## ${product.序号}. ${product.商品标题 || dict.unknown}\n\n`;
     if (columns['图片'] && product.图片链接) {
       md += `![Product](${product.图片链接})\n\n`;
+    } else if (columns['图片']) {
+      md += `*${dict.noImage}*\n\n`;
     }
     md += `| ${dict.attr} | ${dict.value} |\n| --- | --- |\n`;
     if (columns['价格']) md += `| ${dict.price} | ${product.价格 || '-'} ${dict.yuan} |\n`;
@@ -360,18 +455,36 @@ async function exportProducts(products, options = {}) {
   const columns = { ...settings.columns, ...(options.columns || {}) };
   const lang = options.language || settings.language || 'zh';
   const mode = options.mode || 'products';
+  const imageSize = options.imageSize || settings.imageSize || 120;
+  const tabId = options.tabId || null;
   const dict = getDict(lang);
   const title = mode === 'collection' ? dict.titleCollection : dict.titleProducts;
+
   const productsWithIndex = (products || []).map((p, i) => ({
     ...p,
     序号: i + 1,
-    图片链接: normalizeImageUrl(p && p.图片链接)
+    图片链接: normalizeImageUrl(p && p.图片链接),
+    价格: p && p.价格 != null ? String(p.价格).trim() : ''
   }));
+
   const { dateStr, timeStr } = getTimestampParts();
   const prefix = mode === 'collection' ? '1688_collection' : '1688_products';
 
+  await notifyProgress(tabId, {
+    stage: 'start',
+    current: 0,
+    total: productsWithIndex.length,
+    message: 'Export started'
+  });
+
   if (exportFormat === 'xlsx') {
-    const buffer = await generateXLSX(productsWithIndex, columns, lang, title);
+    const buffer = await generateXLSX(productsWithIndex, columns, lang, title, imageSize, tabId);
+    await notifyProgress(tabId, {
+      stage: 'download',
+      current: productsWithIndex.length,
+      total: productsWithIndex.length,
+      message: 'Saving file'
+    });
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     });
@@ -381,6 +494,13 @@ async function exportProducts(products, options = {}) {
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
     await downloadBlob(blob, `${prefix}_${dateStr}_${timeStr}.md`);
   }
+
+  await notifyProgress(tabId, {
+    stage: 'done',
+    current: productsWithIndex.length,
+    total: productsWithIndex.length,
+    message: 'Export completed'
+  });
 
   return { success: true, count: productsWithIndex.length };
 }
@@ -395,9 +515,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'exportFromCollection' || request.action === 'exportSelected') {
     const mode = request.action === 'exportFromCollection' ? 'collection' : 'products';
+    const tabId = (request.options && request.options.tabId) || (sender && sender.tab && sender.tab.id) || null;
     exportProducts(request.products || [], {
       ...(request.options || {}),
-      mode
+      mode,
+      tabId
     }).then((result) => {
       sendResponse(result);
     }).catch((error) => {
@@ -417,10 +539,11 @@ chrome.runtime.onInstalled.addListener((details) => {
         maxProducts: 0,
         filterAds: true,
         columns: { ...DEFAULT_COLUMNS },
-        language: 'zh'
+        language: 'zh',
+        imageSize: 120
       }
     });
   }
 });
 
-console.log('[1688 Smart Scraper] Background service worker started');
+console.log('[1688 Smart Scraper] Background service worker started v1.7.0');
