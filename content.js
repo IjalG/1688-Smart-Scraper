@@ -113,7 +113,12 @@
     let text = cleanText(String(value));
     if (!text) return '0';
 
-    text = text.replace(/已售|成交|销量|付款|人付款|件|＋|\+/gi, '').trim();
+    // 兼容：已售1万+ / 成交 2.3万笔 / 1000+人付款 / 1w+
+    text = text
+      .replace(/已售|再成交|成交|销量|付款|人付款|笔|件|次|＋|\+/gi, ' ')
+      .replace(/,/g, '')
+      .trim();
+
     const match = text.match(/([\d.]+)\s*([万千百wWkK]?)/);
     if (!match) {
       const plain = text.match(/[\d.]+/);
@@ -164,25 +169,78 @@
   }
 
   function extractSales(card) {
-    const selectors = [
+    const pickFromText = (text, { allowPureNumber = false } = {}) => {
+      const cleaned = cleanText(text);
+      if (!cleaned || cleaned.length > 40) return '';
+      if (!/\d/.test(cleaned)) return '';
+      if (/[¥￥]/.test(cleaned)) return '';
+      // 明确销量语义，或 1688 常见纯数字缩写：1000+ / 1万+ / 2.3万
+      const hasKeyword = /(成交|已售|销量|人付款|付款|热销|售出|月销|总销)/.test(cleaned);
+      const pureNumberLike = /^[\d.,]+\s*[万千百wWkK]?\s*[+＋]?$/.test(cleaned);
+      if (!hasKeyword && !pureNumberLike && !allowPureNumber) return '';
+      // 稳定销量节点里即使带少量前缀，也尝试抽数字
+      if (!hasKeyword && !pureNumberLike && allowPureNumber) {
+        if (!/[\d.,]+\s*[万千百wWkK]?/.test(cleaned)) return '';
+      }
+      const sales = cleanSales(cleaned);
+      return sales && sales !== '0' ? sales : '';
+    };
+
+    // 1) 旧版搜索页稳定选择器：.col-desc_after 通常直接是销量数字（无“已售”字样）
+    const classicSelectors = [
       '.col-desc_after',
-      '[class*="sale"]',
-      '[class*="Sold"]',
-      '[class*="deal"]',
-      'span',
-      'div'
+      '[class*="col-desc_after"]',
+      '[class*="desc_after"]',
+      '[class*="sale-num"]',
+      '[class*="sold-count"]',
+      '[class*="offer-sale"]',
+      '[class*="row-sale"]'
     ];
-    for (const selector of selectors) {
+    for (const selector of classicSelectors) {
       try {
         const nodes = card.querySelectorAll(selector);
         for (const node of nodes) {
-          const text = cleanText(node.textContent);
-          if (!text || text.length > 24) continue;
-          if (!/(成交|已售|销量|人付款|付款)/.test(text)) continue;
-          return cleanSales(text);
+          const sales = pickFromText(node.textContent, { allowPureNumber: true });
+          if (sales) return sales;
         }
       } catch (e) {}
     }
+
+    // 2) class 名像销量的节点
+    const classHintSelectors = [
+      '[class*="sale"]',
+      '[class*="Sale"]',
+      '[class*="sold"]',
+      '[class*="Sold"]',
+      '[class*="deal"]',
+      '[class*="Deal"]',
+      '[class*="volume"]',
+      '[class*="trade"]'
+    ];
+    for (const selector of classHintSelectors) {
+      try {
+        const nodes = card.querySelectorAll(selector);
+        for (const node of nodes) {
+          const sales = pickFromText(node.textContent);
+          if (sales) return sales;
+        }
+      } catch (e) {}
+    }
+
+    // 3) 卡片全文正则兜底
+    const full = cleanText(card.textContent || '');
+    const patterns = [
+      /(?:已售|成交|销量)\s*([\d.,]+\s*[万千百wWkK]?\s*[+＋]?)/i,
+      /([\d.,]+\s*[万千百wWkK]?\s*[+＋]?)\s*(?:人付款|付款|笔成交|成交)/i
+    ];
+    for (const re of patterns) {
+      const m = full.match(re);
+      if (m && m[1]) {
+        const sales = cleanSales(m[1]);
+        if (sales && sales !== '0') return sales;
+      }
+    }
+
     return '0';
   }
 
