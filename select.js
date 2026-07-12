@@ -387,7 +387,7 @@ function normalizeWorkbenchMode(mode) {
 }
 
 function effectiveSortWeights() {
-  if (!isCollectionMode || !isProMode()) {
+  if (!isProMode()) {
     return { weightPrice: 1, weightSales: 1 };
   }
   return {
@@ -399,10 +399,12 @@ function effectiveSortWeights() {
 function applyWorkbenchModeUI() {
   const weightControls = document.getElementById('weightControls');
   if (weightControls) {
-    // Weights only in collection + pro mode
-    const show = isCollectionMode && isProMode();
-    weightControls.classList.toggle('hidden', !show);
+    // Weights only in pro mode (collection + direct select)
+    weightControls.classList.toggle('hidden', !isProMode());
   }
+  document.querySelectorAll('.collection-only').forEach((el) => {
+    el.classList.toggle('hidden', !isCollectionMode);
+  });
   if (!isProMode()) {
     sortState.weightPrice = 1;
     sortState.weightSales = 1;
@@ -413,49 +415,52 @@ function applyWorkbenchModeUI() {
   }
 }
 
+function sortProductEntries(entries) {
+  if (!sortState.mode || sortState.mode === 'default') return entries;
+  return entries.slice().sort((a, b) => {
+    const pa = a.product;
+    const pb = b.product;
+    if (sortState.mode === 'score_desc') {
+      const weights = effectiveSortWeights();
+      return computeScore(pb, weights) - computeScore(pa, weights);
+    }
+    if (sortState.mode === 'price_asc') {
+      const va = parsePriceNumber(pa.价格);
+      const vb = parsePriceNumber(pb.价格);
+      if (!Number.isFinite(va) && !Number.isFinite(vb)) return 0;
+      if (!Number.isFinite(va)) return 1;
+      if (!Number.isFinite(vb)) return -1;
+      return va - vb;
+    }
+    if (sortState.mode === 'price_desc') {
+      const va = parsePriceNumber(pa.价格);
+      const vb = parsePriceNumber(pb.价格);
+      if (!Number.isFinite(va) && !Number.isFinite(vb)) return 0;
+      if (!Number.isFinite(va)) return 1;
+      if (!Number.isFinite(vb)) return -1;
+      return vb - va;
+    }
+    if (sortState.mode === 'sales_desc') {
+      return parseSalesNumber(pb.销量) - parseSalesNumber(pa.销量);
+    }
+    return 0;
+  });
+}
+
 function getFolderProducts(folderId) {
+  let entries;
   if (!isCollectionMode) {
-    return currentProducts.map((product, index) => ({ product, index }));
-  }
-  let entries = currentProducts
-    .map((p, index) => ({ product: p, index }))
-    .filter(({ product }) => (product.folder || 'default') === folderId);
+    entries = currentProducts.map((product, index) => ({ product, index }));
+  } else {
+    entries = currentProducts
+      .map((p, index) => ({ product: p, index }))
+      .filter(({ product }) => (product.folder || 'default') === folderId);
 
-  if (filterState.status && filterState.status !== 'all') {
-    entries = entries.filter(({ product }) => normalizeStatus(product.status) === filterState.status);
+    if (filterState.status && filterState.status !== 'all') {
+      entries = entries.filter(({ product }) => normalizeStatus(product.status) === filterState.status);
+    }
   }
-
-  if (sortState.mode && sortState.mode !== 'default') {
-    entries = entries.slice().sort((a, b) => {
-      const pa = a.product;
-      const pb = b.product;
-      if (sortState.mode === 'score_desc') {
-        const weights = effectiveSortWeights();
-        return computeScore(pb, weights) - computeScore(pa, weights);
-      }
-      if (sortState.mode === 'price_asc') {
-        const va = parsePriceNumber(pa.价格);
-        const vb = parsePriceNumber(pb.价格);
-        if (!Number.isFinite(va) && !Number.isFinite(vb)) return 0;
-        if (!Number.isFinite(va)) return 1;
-        if (!Number.isFinite(vb)) return -1;
-        return va - vb;
-      }
-      if (sortState.mode === 'price_desc') {
-        const va = parsePriceNumber(pa.价格);
-        const vb = parsePriceNumber(pb.价格);
-        if (!Number.isFinite(va) && !Number.isFinite(vb)) return 0;
-        if (!Number.isFinite(va)) return 1;
-        if (!Number.isFinite(vb)) return -1;
-        return vb - va;
-      }
-      if (sortState.mode === 'sales_desc') {
-        return parseSalesNumber(pb.销量) - parseSalesNumber(pa.销量);
-      }
-      return 0;
-    });
-  }
-  return entries;
+  return sortProductEntries(entries);
 }
 
 function updateSelectCount() {
@@ -630,7 +635,8 @@ function renderProductList(listItems) {
 
     const priceValue = product.价格 != null ? String(product.价格) : '';
     const imageUrl = normalizeImageUrl(product.图片链接);
-    const score = isCollectionMode ? computeScore(product, effectiveSortWeights()) : null;
+    const score = computeScore(product, effectiveSortWeights());
+    const scoreText = `${t('scoreLabel')}: ${score.toFixed(1)}`;
     const noteValue = product.notes || '';
     const tagsValue = Array.isArray(product.tags) ? product.tags.join(', ') : '';
 
@@ -643,10 +649,14 @@ function renderProductList(listItems) {
             <option value="rejected"${status === 'rejected' ? ' selected' : ''}>${escapeHtml(t('statusRejected'))}</option>
           </select>
           <input class="tags-input" type="text" data-index="${index}" value="${escapeAttr(tagsValue)}" placeholder="${escapeAttr(t('tagsPlaceholder'))}">
-          <span class="product-score">${escapeHtml(t('scoreLabel'))}: ${escapeHtml(score.toFixed(1))}</span>
+          <span class="product-score">${escapeHtml(scoreText)}</span>
         </div>
         <textarea class="product-note" data-index="${index}" placeholder="${escapeAttr(t('notePlaceholder'))}">${escapeHtml(noteValue)}</textarea>
-    ` : '';
+    ` : `
+        <div class="product-controls">
+          <span class="product-score">${escapeHtml(scoreText)}</span>
+        </div>
+    `;
 
     item.innerHTML = `
       <input type="checkbox" checked data-index="${index}">
@@ -952,17 +962,20 @@ function initFilters() {
   });
 }
 
-function refreshCollectionView() {
-  if (!isCollectionMode) return;
+function refreshProductView() {
   selectedProducts.clear();
   renderProductList(getFolderProducts(currentFolder));
   applyFilters();
-  updateFolderProductsCount();
+  if (isCollectionMode) updateFolderProductsCount();
+}
+
+function refreshCollectionView() {
+  refreshProductView();
 }
 
 function initWorkflowControls() {
   const bar = document.getElementById('workflowBar');
-  if (!bar || !isCollectionMode) return;
+  if (!bar) return;
   bar.classList.add('active');
   applyWorkbenchModeUI();
 
@@ -977,15 +990,16 @@ function initWorkflowControls() {
   if (statusFilter) {
     statusFilter.value = filterState.status || 'all';
     statusFilter.addEventListener('change', () => {
+      if (!isCollectionMode) return;
       filterState.status = statusFilter.value || 'all';
-      refreshCollectionView();
+      refreshProductView();
     });
   }
   if (sortSelect) {
     sortSelect.value = sortState.mode || 'default';
     sortSelect.addEventListener('change', () => {
       sortState.mode = sortSelect.value || 'default';
-      refreshCollectionView();
+      refreshProductView();
     });
   }
   const onWeightChange = () => {
@@ -996,7 +1010,7 @@ function initWorkflowControls() {
     }
     sortState.weightPrice = parseFloat(weightPrice && weightPrice.value) || 0;
     sortState.weightSales = parseFloat(weightSales && weightSales.value) || 0;
-    if (sortState.mode === 'score_desc') refreshCollectionView();
+    if (sortState.mode === 'score_desc') refreshProductView();
     else {
       const weights = effectiveSortWeights();
       document.querySelectorAll('.product-item').forEach((item) => {
@@ -1199,11 +1213,12 @@ async function init() {
     const settings = await chrome.storage.sync.get('settings');
     const opts = settings.settings || {};
     if (opts.language) currentLang = opts.language;
-    // Direct select-export never uses weighted score / workflow sorting
-    workbenchMode = 'simple';
-    sortState = { mode: 'default', weightPrice: 1, weightSales: 1 };
+    workbenchMode = normalizeWorkbenchMode(opts.workbenchMode);
+    if (!isProMode()) {
+      sortState.weightPrice = 1;
+      sortState.weightSales = 1;
+    }
     applyI18n();
-    applyWorkbenchModeUI();
 
     const response = await chrome.tabs.sendMessage(tabId, {
       action: 'getProducts',
@@ -1216,11 +1231,12 @@ async function init() {
 
     if (response && response.products && response.products.length > 0) {
       currentProducts = response.products;
-      renderProductList(currentProducts);
+      renderProductList(getFolderProducts(currentFolder));
       loadingOverlay.style.display = 'none';
       mainContainer.style.display = 'flex';
       initKeyboardShortcuts();
       initFilters();
+      initWorkflowControls();
       initResizeHandle();
 
       if (response.quality && response.quality.ok === false) {
