@@ -101,14 +101,15 @@
 | Excel 图片尺寸 | 80 / 120 / 160 | 120 |
 | 导出字段 | 自定义导出列 | 全部勾选 |
 | 语言 | 中文 / English | 中文 |
+| AI API Key / Base URL / Model | 仅手动 AI 修复时使用；无 Key 不影响日常提取 | 空 / OpenAI 兼容默认 |
 
 ## 架构说明
 
 ```text
 popup.js          入口：加入收藏夹 / 打开选择页 / 设置
-content.js        在 1688 页面提取商品（多选择器 + 启发式 + 质量自检）
+content.js        在 1688 页面提取商品（Adapter Registry + 多规则评分 + 启发式 + 质量自检）
 select.html/js    选品工作台：勾选、改价、换图、筛选、导出
-background.js     下载图片、生成 Excel/Markdown、触发浏览器下载
+background.js     下载图片、生成 Excel/Markdown、手动 AI 修复、规则缓存
 exceljs.min.js    浏览器端 Excel 生成
 ```
 
@@ -154,6 +155,13 @@ MV3 service worker 环境不一定支持 `createObjectURL`。当前导出优先�
 按 `offerId` 去重。添加时会提示“新增 N / 跳过 M”。
 
 ## 版本历史
+
+### v1.8.0
+- Adapter Registry：内置规则 + AI 规则并存，按完整度评分择优
+- 抓取失败引导：`无法正常提取信息？试试 AI 分析模式吧`
+- 手动 AI 修复：精简 2~3 个卡片 DOM → 生成 adapter → dry-run → 更优才保存
+- AI 规则缓存 / 一键回滚内置规则
+- 设置页支持 AI API Key、Base URL、Model（无 Key 不影响日常提取）
 
 ### v1.7.0
 - 选择页支持直接编辑售价

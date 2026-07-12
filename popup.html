@@ -72,7 +72,8 @@ button.collection:hover {
   color: #333;
   margin-bottom: 5px;
 }
-.setting-item select, .setting-item input[type="number"] {
+.setting-item select, .setting-item input[type="number"],
+.setting-item input[type="text"], .setting-item input[type="password"] {
   width: 100%;
   padding: 8px;
   border: 1px solid #ddd;
@@ -152,8 +153,10 @@ button.collection:hover {
   </div>
   <button id="selectBtn">选取导出</button>
   <button id="openCollectionBtn" class="secondary">查看收藏夹 <span class="collection-badge" id="collectionBadge">0</span></button>
+  <button id="aiRepairBtn" class="secondary">开始 AI 修复</button>
   <button id="settingsBtn" class="secondary">设置</button>
   <div class="status" id="status"></div>
+  <div class="status" id="aiHint" style="display:none; color:#b35c00;"></div>
 </div>
 
 <!-- 设置视图 -->
@@ -197,6 +200,24 @@ button.collection:hover {
       <option value="zh">中文</option>
       <option value="en">English</option>
     </select>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="setting-item">
+    <label>AI API Key（可选，仅手动修复时使用）</label>
+    <input type="password" id="aiApiKey" placeholder="sk-..." autocomplete="off">
+  </div>
+  <div class="setting-item">
+    <label>AI Base URL</label>
+    <input type="text" id="aiBaseUrl" placeholder="https://api.openai.com/v1">
+  </div>
+  <div class="setting-item">
+    <label>AI Model</label>
+    <input type="text" id="aiModel" placeholder="gpt-4o-mini">
+  </div>
+  <div class="setting-item">
+    <button id="clearAiRulesBtn" class="secondary" type="button">清除 AI 规则 / 回退内置</button>
   </div>
 
   <div class="setting-item">

@@ -70,6 +70,114 @@
     }
   };
 
+  const ADAPTER_STORAGE_KEY = 'aiAdapters';
+  const ACTIVE_ADAPTER_KEY = 'activeAdapterId';
+
+  const BUILTIN_ADAPTER = {
+    id: 'builtin-1688-search-v1',
+    version: '1.8.0',
+    site: '1688-search',
+    source: 'builtin',
+    card: CONFIG.selectors.productCards.join(', '),
+    fields: {
+      title: CONFIG.selectors.title.slice(),
+      price: ['.price-item', '[class*="price-item"]', '[class*="price"]', '[class*="Price"]'],
+      sales: [
+        '.col-desc_after',
+        '[class*="col-desc_after"]',
+        '[class*="desc_after"]',
+        '[class*="sale-num"]',
+        '[class*="sold-count"]',
+        '[class*="offer-sale"]',
+        '[class*="row-sale"]',
+        '[class*="sale"]',
+        '[class*="sold"]'
+      ],
+      shop: CONFIG.selectors.shop.slice(),
+      image: CONFIG.selectors.image.slice(),
+      link: CONFIG.selectors.link.slice()
+    },
+    filters: {
+      skipCard: CONFIG.selectors.adMarkers.slice()
+    }
+  };
+
+  function asSelectorList(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    return String(value)
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function normalizeAdapter(raw, source) {
+    if (!raw || typeof raw !== 'object') return null;
+    const fields = raw.fields && typeof raw.fields === 'object' ? raw.fields : {};
+    const filters = raw.filters && typeof raw.filters === 'object' ? raw.filters : {};
+    const card = asSelectorList(raw.card);
+    const normalized = {
+      id: String(raw.id || (source === 'ai' ? 'ai-' + Date.now() : 'adapter')),
+      version: String(raw.version || new Date().toISOString().slice(0, 10)),
+      site: String(raw.site || '1688-search'),
+      source: source || raw.source || 'custom',
+      card: card.join(', '),
+      fields: {
+        title: asSelectorList(fields.title),
+        price: asSelectorList(fields.price),
+        sales: asSelectorList(fields.sales),
+        shop: asSelectorList(fields.shop),
+        image: asSelectorList(fields.image),
+        link: asSelectorList(fields.link)
+      },
+      filters: {
+        skipCard: asSelectorList(filters.skipCard)
+      }
+    };
+    if (!normalized.fields.title.length && !normalized.fields.link.length && !card.length) {
+      return null;
+    }
+    return normalized;
+  }
+
+  async function loadStoredAdapters() {
+    try {
+      const result = await chrome.storage.local.get([ADAPTER_STORAGE_KEY, ACTIVE_ADAPTER_KEY]);
+      const list = Array.isArray(result[ADAPTER_STORAGE_KEY]) ? result[ADAPTER_STORAGE_KEY] : [];
+      const adapters = list
+        .map((item) => normalizeAdapter(item, item && item.source === 'builtin' ? 'builtin' : 'ai'))
+        .filter(Boolean);
+      return {
+        adapters,
+        activeAdapterId: result[ACTIVE_ADAPTER_KEY] || ''
+      };
+    } catch (e) {
+      return { adapters: [], activeAdapterId: '' };
+    }
+  }
+
+  async function getAdapterRegistry() {
+    const stored = await loadStoredAdapters();
+    const map = new Map();
+    map.set(BUILTIN_ADAPTER.id, { ...BUILTIN_ADAPTER });
+    stored.adapters.forEach((adapter) => {
+      if (adapter.id === BUILTIN_ADAPTER.id) return;
+      map.set(adapter.id, adapter);
+    });
+    // AI adapters first when active, then remaining AI, then builtin
+    const all = Array.from(map.values());
+    all.sort((a, b) => {
+      if (a.id === stored.activeAdapterId) return -1;
+      if (b.id === stored.activeAdapterId) return 1;
+      if (a.source === 'ai' && b.source !== 'ai') return -1;
+      if (b.source === 'ai' && a.source !== 'ai') return 1;
+      return 0;
+    });
+    return { adapters: all, activeAdapterId: stored.activeAdapterId };
+  }
+
   function querySelectorFirst(container, selectors) {
     for (const selector of selectors) {
       try {
@@ -85,13 +193,16 @@
     return String(text).replace(/[\s\n\r\t]+/g, ' ').trim();
   }
 
-  function isAdCard(card) {
+  function isAdCard(card, adapter) {
     const className = card.className || '';
     if (typeof className === 'string' &&
       (className.includes('adOffer') || className.includes('ad-offer') || className.includes('AdOffer'))) {
       return true;
     }
-    for (const selector of CONFIG.selectors.adMarkers) {
+    const markers = (adapter && adapter.filters && adapter.filters.skipCard && adapter.filters.skipCard.length)
+      ? adapter.filters.skipCard
+      : CONFIG.selectors.adMarkers;
+    for (const selector of markers) {
       try {
         if (card.matches && card.matches(selector)) return true;
         if (card.querySelector(selector)) return true;
@@ -141,8 +252,10 @@
     return String(Math.round(num * 10) / 10);
   }
 
-  function extractPrice(card) {
-    const selectors = [
+  function extractPrice(card, adapter) {
+    const selectors = (adapter && adapter.fields && adapter.fields.price && adapter.fields.price.length)
+      ? adapter.fields.price.concat(['span', 'div'])
+      : [
       '.price-item',
       '[class*="price-item"]',
       '[class*="price"]',
@@ -168,7 +281,7 @@
     return '';
   }
 
-  function extractSales(card) {
+  function extractSales(card, adapter) {
     const pickFromText = (text, { allowPureNumber = false } = {}) => {
       const cleaned = cleanText(text);
       if (!cleaned || cleaned.length > 40) return '';
@@ -186,8 +299,10 @@
       return sales && sales !== '0' ? sales : '';
     };
 
-    // 1) 旧版搜索页稳定选择器：.col-desc_after 通常直接是销量数字（无“已售”字样）
-    const classicSelectors = [
+    // 1) adapter 字段选择器 / 旧版搜索页稳定选择器
+    const classicSelectors = (adapter && adapter.fields && adapter.fields.sales && adapter.fields.sales.length)
+      ? adapter.fields.sales
+      : [
       '.col-desc_after',
       '[class*="col-desc_after"]',
       '[class*="desc_after"]',
@@ -272,7 +387,7 @@
     return imageUrl + suffix;
   }
 
-  function extractImageUrl(card) {
+  function extractImageUrl(card, adapter) {
     const candidates = [];
     const pushCandidate = (value) => {
       if (!value) return;
@@ -280,8 +395,11 @@
       if (isUsableImageUrl(normalized)) candidates.push(normalized);
     };
 
+    const imageSelectors = (adapter && adapter.fields && adapter.fields.image && adapter.fields.image.length)
+      ? adapter.fields.image
+      : CONFIG.selectors.image;
     const imgElements = [];
-    for (const selector of CONFIG.selectors.image) {
+    for (const selector of imageSelectors) {
       try {
         card.querySelectorAll(selector).forEach((el) => imgElements.push(el));
       } catch (e) {}
@@ -328,7 +446,24 @@
     return '';
   }
 
-  function extractLink(card) {
+  function extractLink(card, adapter) {
+    const preferredSelectors = (adapter && adapter.fields && adapter.fields.link && adapter.fields.link.length)
+      ? adapter.fields.link
+      : [];
+    for (const selector of preferredSelectors) {
+      try {
+        const nodes = card.querySelectorAll(selector);
+        for (const link of nodes) {
+          const href = link.href || link.getAttribute('href') || '';
+          const id = extractOfferIdFromHref(href);
+          if (id) {
+            if (href.includes('detail.1688.com')) return href.split('?')[0];
+            return `https://detail.1688.com/offer/${id}.html`;
+          }
+        }
+      } catch (e) {}
+    }
+
     const allLinks = card.querySelectorAll('a[href]');
     let offerId = null;
 
@@ -354,8 +489,11 @@
     return '';
   }
 
-  function extractTitle(card) {
-    for (const selector of CONFIG.selectors.title) {
+  function extractTitle(card, adapter) {
+    const titleSelectors = (adapter && adapter.fields && adapter.fields.title && adapter.fields.title.length)
+      ? adapter.fields.title
+      : CONFIG.selectors.title;
+    for (const selector of titleSelectors) {
       try {
         const titleEl = card.querySelector(selector);
         if (!titleEl) continue;
@@ -369,7 +507,7 @@
       } catch (e) {}
     }
 
-    const imgElement = querySelectorFirst(card, CONFIG.selectors.image);
+    const imgElement = querySelectorFirst(card, (adapter && adapter.fields && adapter.fields.image) || CONFIG.selectors.image);
     if (imgElement) {
       const alt = imgElement.getAttribute('alt');
       if (alt) return cleanText(alt);
@@ -383,14 +521,17 @@
     return '';
   }
 
-  function extractShopName(card) {
+  function extractShopName(card, adapter) {
     const shopLink = card.querySelector('.offer-shop-row .offer-desc-item[href*=".1688.com"]');
     if (shopLink) {
       const textEl = shopLink.querySelector('.desc-text');
       return textEl ? cleanText(textEl.textContent) : cleanText(shopLink.textContent);
     }
 
-    for (const selector of CONFIG.selectors.shop) {
+    const shopSelectors = (adapter && adapter.fields && adapter.fields.shop && adapter.fields.shop.length)
+      ? adapter.fields.shop
+      : CONFIG.selectors.shop;
+    for (const selector of shopSelectors) {
       try {
         const el = card.querySelector(selector);
         if (!el) continue;
@@ -401,23 +542,27 @@
     return '';
   }
 
-  function extractProductData(card, index) {
-    const link = extractLink(card);
+  function extractProductData(card, index, adapter) {
+    const link = extractLink(card, adapter);
     const offerId = extractOfferIdFromHref(link);
     return {
       序号: index + 1,
-      商品标题: extractTitle(card),
-      价格: extractPrice(card),
-      销量: extractSales(card),
-      店铺名称: extractShopName(card),
-      图片链接: extractImageUrl(card),
+      商品标题: extractTitle(card, adapter),
+      价格: extractPrice(card, adapter),
+      销量: extractSales(card, adapter),
+      店铺名称: extractShopName(card, adapter),
+      图片链接: extractImageUrl(card, adapter),
       商品链接: link,
-      _offerId: offerId || undefined
+      _offerId: offerId || undefined,
+      _adapterId: adapter && adapter.id ? adapter.id : undefined
     };
   }
 
-  function findProductCardsBySelectors() {
-    for (const selector of CONFIG.selectors.productCards) {
+  function findProductCardsBySelectors(adapter) {
+    const cardSelectors = adapter && adapter.card
+      ? asSelectorList(adapter.card)
+      : CONFIG.selectors.productCards;
+    for (const selector of cardSelectors) {
       try {
         const cards = document.querySelectorAll(selector);
         if (cards.length > 0) return Array.from(cards);
@@ -467,10 +612,14 @@
     return cards;
   }
 
-  function findProductCards() {
-    const bySelector = findProductCardsBySelectors();
+  function findProductCards(adapter) {
+    const bySelector = findProductCardsBySelectors(adapter);
     if (bySelector.length > 0) return bySelector;
-    return findProductCardsHeuristic();
+    // 仅内置路径允许启发式兜底，避免 AI 坏规则被启发式掩盖后无法察觉
+    if (!adapter || adapter.source === 'builtin' || adapter.id === BUILTIN_ADAPTER.id) {
+      return findProductCardsHeuristic();
+    }
+    return [];
   }
 
   function scoreProduct(product) {
@@ -537,23 +686,17 @@
     };
   }
 
-  function extractProducts() {
-    console.log('[1688智能选品助手] 开始提取商品数据...');
-    const productCards = findProductCards();
-    console.log(`[1688智能选品助手] 找到 ${productCards.length} 个商品卡片`);
-
+  function extractProductsWithAdapter(adapter) {
+    const productCards = findProductCards(adapter);
     const products = [];
     let validCount = 0;
     const maxCount = CONFIG.maxProducts > 0 ? CONFIG.maxProducts : Infinity;
 
     for (let i = 0; i < productCards.length && validCount < maxCount; i++) {
       const card = productCards[i];
+      if (CONFIG.filterAds && isAdCard(card, adapter)) continue;
 
-      if (CONFIG.filterAds && isAdCard(card)) {
-        continue;
-      }
-
-      const productData = extractProductData(card, validCount);
+      const productData = extractProductData(card, validCount, adapter);
       if (productData.商品标题 || productData.商品链接 || productData.图片链接) {
         products.push(productData);
         validCount++;
@@ -564,10 +707,151 @@
       ...item,
       序号: index + 1
     }));
-
     const quality = buildQualityReport(deduped, productCards.length);
-    console.log('[1688智能选品助手] 提取完成:', quality);
-    return { products: deduped, quality };
+    quality.adapterId = adapter && adapter.id ? adapter.id : '';
+    quality.adapterSource = adapter && adapter.source ? adapter.source : '';
+    return { products: deduped, quality, cardCount: productCards.length, adapter };
+  }
+
+  function rankExtraction(result) {
+    if (!result || !result.quality) return -1;
+    const q = result.quality;
+    const total = q.total || 0;
+    if (total === 0) return 0;
+    const avg = Number(q.score) || 0;
+    const missing = q.missing || {};
+    const missingPenalty = ((missing.price || 0) + (missing.image || 0) + (missing.link || 0)) / (total * 3);
+    return total * 10 + avg * 5 - missingPenalty * 20 + (q.ok ? 5 : 0);
+  }
+
+  async function extractProducts() {
+    console.log('[1688智能选品助手] 开始提取商品数据...');
+    const registry = await getAdapterRegistry();
+    const attempts = [];
+    let best = null;
+
+    for (const adapter of registry.adapters) {
+      try {
+        const result = extractProductsWithAdapter(adapter);
+        attempts.push({
+          adapterId: adapter.id,
+          source: adapter.source,
+          total: result.quality.total,
+          score: result.quality.score,
+          ok: result.quality.ok,
+          rank: rankExtraction(result)
+        });
+        if (!best || rankExtraction(result) > rankExtraction(best)) {
+          best = result;
+        }
+      } catch (error) {
+        attempts.push({
+          adapterId: adapter.id,
+          source: adapter.source,
+          error: error.message || String(error),
+          rank: -1
+        });
+      }
+    }
+
+    if (!best) {
+      best = {
+        products: [],
+        quality: {
+          ok: false,
+          total: 0,
+          cardCount: 0,
+          score: 0,
+          missing: { title: 0, price: 0, image: 0, link: 0 },
+          message: '未找到商品卡片，请确认当前是 1688 搜索结果页，并向下滚动加载商品'
+        }
+      };
+    }
+
+    best.quality.attempts = attempts;
+    best.quality.suggestAiRepair = !best.quality.ok || best.products.length === 0;
+    if (best.products.length === 0) {
+      best.quality.message = best.quality.message || '未能识别到商品卡片，页面结构可能已更新';
+      best.quality.aiHint = '无法正常提取信息？试试 AI 分析模式吧';
+    } else if (!best.quality.ok) {
+      best.quality.aiHint = '无法正常提取信息？试试 AI 分析模式吧';
+    }
+
+    console.log('[1688智能选品助手] 提取完成:', best.quality);
+    return best;
+  }
+
+  function simplifyCardHtml(card) {
+    const clone = card.cloneNode(true);
+    clone.querySelectorAll('script, style, noscript, svg, iframe').forEach((el) => el.remove());
+    const walker = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+    const toClean = [];
+    while (walker.nextNode()) toClean.push(walker.currentNode);
+    toClean.forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        const name = attr.name.toLowerCase();
+        const keep = name === 'class' || name === 'id' || name === 'href' || name === 'src' ||
+          name === 'data-src' || name === 'data-lazy-src' || name === 'title' || name === 'alt' ||
+          name === 'data-renderkey' || name.startsWith('data-offer');
+        if (!keep) el.removeAttribute(attr.name);
+      });
+      if (el.childNodes && el.childNodes.length > 40) {
+        // keep structure shallow for token budget
+      }
+    });
+    let html = clone.outerHTML || '';
+    html = html.replace(/\s+/g, ' ').trim();
+    if (html.length > 4500) html = html.slice(0, 4500) + '<!--truncated-->';
+    return html;
+  }
+
+  function sampleDOMForRepair(maxCards) {
+    const limit = Math.max(1, Math.min(3, maxCards || 3));
+    let cards = findProductCardsBySelectors(BUILTIN_ADAPTER);
+    if (cards.length === 0) cards = findProductCardsHeuristic();
+    if (cards.length === 0) {
+      // last resort: offer anchors' parents
+      const anchors = Array.from(document.querySelectorAll('a[href*="detail.1688.com/offer"], a[href*="offerId="]')).slice(0, limit);
+      cards = anchors.map((a) => a.closest('[class]') || a.parentElement).filter(Boolean);
+    }
+    const samples = [];
+    const seen = new Set();
+    for (const card of cards) {
+      if (!card || seen.has(card)) continue;
+      seen.add(card);
+      samples.push({
+        html: simplifyCardHtml(card),
+        text: cleanText(card.textContent || '').slice(0, 300)
+      });
+      if (samples.length >= limit) break;
+    }
+    return {
+      url: location.href,
+      title: document.title || '',
+      sampleCount: samples.length,
+      samples
+    };
+  }
+
+  function dryRunAdapter(rawAdapter) {
+    const adapter = normalizeAdapter(rawAdapter, rawAdapter && rawAdapter.source === 'builtin' ? 'builtin' : 'ai');
+    if (!adapter) {
+      return {
+        success: false,
+        message: '适配器格式无效',
+        products: [],
+        quality: { ok: false, total: 0, message: '适配器格式无效' }
+      };
+    }
+    const result = extractProductsWithAdapter(adapter);
+    return {
+      success: result.products.length > 0,
+      adapter,
+      products: result.products,
+      quality: result.quality,
+      message: result.quality.message,
+      rank: rankExtraction(result)
+    };
   }
 
   function showNotification(message, type = 'info') {
@@ -626,22 +910,60 @@
         CONFIG.columns = { ...DEFAULT_COLUMNS, ...options.columns };
       }
 
-      try {
-        const { products, quality } = extractProducts();
+      extractProducts().then((result) => {
+        const products = result.products || [];
+        const quality = result.quality || {};
         sendResponse({
           success: products.length > 0,
           products,
           quality,
-          message: quality.message
+          message: quality.message,
+          aiHint: quality.aiHint || '',
+          suggestAiRepair: !!quality.suggestAiRepair
         });
-      } catch (error) {
+      }).catch((error) => {
         sendResponse({
           success: false,
           products: [],
-          quality: { ok: false, total: 0, message: error.message || String(error) },
-          message: error.message || String(error)
+          quality: { ok: false, total: 0, message: error.message || String(error), suggestAiRepair: true },
+          message: error.message || String(error),
+          aiHint: '无法正常提取信息？试试 AI 分析模式吧',
+          suggestAiRepair: true
         });
+      });
+      return true;
+    }
+
+    if (request.action === 'sampleDOMForRepair') {
+      try {
+        const sample = sampleDOMForRepair(request.maxCards || 3);
+        sendResponse({ success: sample.sampleCount > 0, sample, message: sample.sampleCount ? 'ok' : '未找到可分析的商品样本' });
+      } catch (error) {
+        sendResponse({ success: false, message: error.message || String(error) });
       }
+      return true;
+    }
+
+    if (request.action === 'dryRunAdapter') {
+      try {
+        const result = dryRunAdapter(request.adapter);
+        sendResponse(result);
+      } catch (error) {
+        sendResponse({ success: false, message: error.message || String(error), products: [], quality: { ok: false, total: 0 } });
+      }
+      return true;
+    }
+
+    if (request.action === 'getAdapterStatus') {
+      getAdapterRegistry().then((registry) => {
+        sendResponse({
+          success: true,
+          activeAdapterId: registry.activeAdapterId || BUILTIN_ADAPTER.id,
+          adapters: registry.adapters.map((a) => ({ id: a.id, source: a.source, version: a.version, site: a.site }))
+        });
+      }).catch((error) => {
+        sendResponse({ success: false, message: error.message || String(error) });
+      });
       return true;
     }
 
@@ -658,5 +980,5 @@
     }
   });
 
-  console.log('[1688智能选品助手] 内容脚本已加载');
+  console.log('[1688智能选品助手] 内容脚本已加载 v1.8.0');
 })();

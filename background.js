@@ -505,6 +505,296 @@ async function exportProducts(products, options = {}) {
   return { success: true, count: productsWithIndex.length };
 }
 
+const ADAPTER_STORAGE_KEY = 'aiAdapters';
+const ACTIVE_ADAPTER_KEY = 'activeAdapterId';
+const BUILTIN_ADAPTER_ID = 'builtin-1688-search-v1';
+
+function asSelectorList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeAdapter(raw, source) {
+  if (!raw || typeof raw !== 'object') return null;
+  const fields = raw.fields && typeof raw.fields === 'object' ? raw.fields : {};
+  const filters = raw.filters && typeof raw.filters === 'object' ? raw.filters : {};
+  const card = asSelectorList(raw.card);
+  const adapter = {
+    id: String(raw.id || `ai-${Date.now()}`),
+    version: String(raw.version || new Date().toISOString().slice(0, 10)),
+    site: String(raw.site || '1688-search'),
+    source: source || raw.source || 'ai',
+    card: card.join(', '),
+    fields: {
+      title: asSelectorList(fields.title),
+      price: asSelectorList(fields.price),
+      sales: asSelectorList(fields.sales),
+      shop: asSelectorList(fields.shop),
+      image: asSelectorList(fields.image),
+      link: asSelectorList(fields.link)
+    },
+    filters: {
+      skipCard: asSelectorList(filters.skipCard)
+    },
+    updatedAt: raw.updatedAt || new Date().toISOString()
+  };
+  if (!adapter.card && !adapter.fields.title.length && !adapter.fields.link.length) return null;
+  return adapter;
+}
+
+function extractJsonObject(text) {
+  if (!text) return null;
+  const raw = String(text).trim();
+  try {
+    return JSON.parse(raw);
+  } catch (e) {}
+
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced && fenced[1]) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch (e) {}
+  }
+
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(raw.slice(start, end + 1));
+    } catch (e) {}
+  }
+  return null;
+}
+
+async function loadAiSettings() {
+  const result = await chrome.storage.sync.get('settings');
+  const settings = result.settings || {};
+  return {
+    language: settings.language || 'zh',
+    aiApiKey: settings.aiApiKey || '',
+    aiBaseUrl: (settings.aiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, ''),
+    aiModel: settings.aiModel || 'gpt-4o-mini'
+  };
+}
+
+async function loadAdapterState() {
+  const result = await chrome.storage.local.get([ADAPTER_STORAGE_KEY, ACTIVE_ADAPTER_KEY]);
+  const adapters = Array.isArray(result[ADAPTER_STORAGE_KEY]) ? result[ADAPTER_STORAGE_KEY] : [];
+  return {
+    adapters: adapters.map((item) => normalizeAdapter(item, item && item.source === 'builtin' ? 'builtin' : 'ai')).filter(Boolean),
+    activeAdapterId: result[ACTIVE_ADAPTER_KEY] || ''
+  };
+}
+
+async function saveAdapterState(adapters, activeAdapterId) {
+  await chrome.storage.local.set({
+    [ADAPTER_STORAGE_KEY]: adapters,
+    [ACTIVE_ADAPTER_KEY]: activeAdapterId || ''
+  });
+}
+
+async function sendTabMessage(tabId, message) {
+  if (!tabId) throw new Error('缺少页面标签');
+  return chrome.tabs.sendMessage(tabId, message);
+}
+
+function buildRepairPrompt(sample) {
+  return [
+    'You are repairing CSS selector extraction rules for 1688.com product search cards.',
+    'Return ONLY a JSON object with this shape:',
+    '{',
+    '  "version": "YYYY-MM-DD",',
+    '  "site": "1688-search",',
+    '  "card": "css selectors for product card root, comma separated or array",',
+    '  "fields": {',
+    '    "title": ["..."],',
+    '    "price": ["..."],',
+    '    "sales": ["..."],',
+    '    "shop": ["..."],',
+    '    "image": ["..."],',
+    '    "link": ["..."]',
+    '  },',
+    '  "filters": { "skipCard": ["ad selectors"] }',
+    '}',
+    'Rules:',
+    '- Prefer stable class/href patterns over brittle absolute paths.',
+    '- card selectors must match repeated product cards.',
+    '- link selectors should point to detail.1688.com/offer or offerId.',
+    '- image selectors should find alicdn product images.',
+    '- Do not invent product data; only selectors.',
+    '- Keep selector lists short (1-6 each).',
+    '',
+    `Page URL: ${sample.url || ''}`,
+    `Page title: ${sample.title || ''}`,
+    'Sample cards:'
+  ].concat((sample.samples || []).map((item, index) => {
+    return `\n[Sample ${index + 1} text]\n${item.text || ''}\n[Sample ${index + 1} html]\n${item.html || ''}`;
+  })).join('\n');
+}
+
+async function callLlmForAdapter(sample, aiSettings) {
+  if (!aiSettings.aiApiKey) {
+    throw new Error('未配置 AI API Key。请在扩展设置中填写后再试。');
+  }
+  const endpoint = `${aiSettings.aiBaseUrl}/chat/completions`;
+  try {
+    if (chrome.permissions && chrome.permissions.contains && chrome.permissions.request) {
+      const origin = new URL(aiSettings.aiBaseUrl).origin + '/*';
+      const has = await chrome.permissions.contains({ origins: [origin] });
+      if (!has) {
+        const granted = await chrome.permissions.request({ origins: [origin] });
+        if (!granted) {
+          throw new Error('未授予 AI 接口域名访问权限，请允许后重试');
+        }
+      }
+    }
+  } catch (permError) {
+    if (String(permError.message || permError).includes('未授予')) throw permError;
+    // service worker 中 request 可能受限，继续尝试 fetch
+    console.warn('[1688 Smart Scraper] permission request skipped', permError);
+  }
+  const body = {
+    model: aiSettings.aiModel,
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: 'You generate reusable CSS selector adapters for 1688 product cards. Output JSON only.'
+      },
+      {
+        role: 'user',
+        content: buildRepairPrompt(sample)
+      }
+    ]
+  };
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${aiSettings.aiApiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`AI 请求失败 (${response.status}): ${errText.slice(0, 240) || response.statusText}`);
+  }
+
+  const data = await response.json();
+  const content = data && data.choices && data.choices[0] && data.choices[0].message
+    ? data.choices[0].message.content
+    : '';
+  const parsed = extractJsonObject(content);
+  if (!parsed) throw new Error('AI 返回无法解析为 JSON 适配器');
+  return parsed;
+}
+
+function qualityRank(quality, productCount) {
+  if (!quality) return productCount > 0 ? productCount : 0;
+  const total = quality.total || productCount || 0;
+  if (total === 0) return 0;
+  const avg = Number(quality.score) || 0;
+  const missing = quality.missing || {};
+  const missingPenalty = ((missing.price || 0) + (missing.image || 0) + (missing.link || 0)) / (total * 3);
+  return total * 10 + avg * 5 - missingPenalty * 20 + (quality.ok ? 5 : 0);
+}
+
+async function runAiRepair(tabId) {
+  if (!tabId) throw new Error('缺少 1688 页面标签，无法采样 DOM');
+  const aiSettings = await loadAiSettings();
+  const sampleResp = await sendTabMessage(tabId, { action: 'sampleDOMForRepair', maxCards: 3 });
+  if (!sampleResp || !sampleResp.success || !sampleResp.sample || !sampleResp.sample.sampleCount) {
+    throw new Error((sampleResp && sampleResp.message) || '未找到可分析的商品样本，请先滚动加载商品');
+  }
+
+  // baseline with current best rules
+  let baseline = { products: [], quality: { total: 0, score: 0, ok: false }, rank: 0 };
+  try {
+    const current = await sendTabMessage(tabId, {
+      action: 'getProducts',
+      options: { maxProducts: 0, filterAds: true }
+    });
+    baseline = {
+      products: (current && current.products) || [],
+      quality: (current && current.quality) || { total: 0, ok: false },
+      rank: qualityRank(current && current.quality, (current && current.products && current.products.length) || 0)
+    };
+  } catch (e) {}
+
+  const rawAdapter = await callLlmForAdapter(sampleResp.sample, aiSettings);
+  const candidate = normalizeAdapter({
+    ...rawAdapter,
+    id: `ai-1688-${Date.now()}`,
+    source: 'ai'
+  }, 'ai');
+  if (!candidate) throw new Error('AI 生成的适配器无效');
+
+  const dry = await sendTabMessage(tabId, { action: 'dryRunAdapter', adapter: candidate });
+  if (!dry || !dry.success || !dry.products || dry.products.length === 0) {
+    return {
+      success: false,
+      message: (dry && dry.message) || 'AI 规则 dry-run 未提取到商品，未保存',
+      dryRun: dry || null,
+      baselineRank: baseline.rank
+    };
+  }
+
+  const newRank = typeof dry.rank === 'number' ? dry.rank : qualityRank(dry.quality, dry.products.length);
+  if (newRank < baseline.rank) {
+    return {
+      success: false,
+      message: `AI 规则未优于现有规则（新评分 ${newRank.toFixed(1)} < 旧评分 ${baseline.rank.toFixed(1)}），未保存`,
+      dryRun: dry,
+      baselineRank: baseline.rank,
+      newRank
+    };
+  }
+
+  const state = await loadAdapterState();
+  const adapters = state.adapters.filter((item) => item.source !== 'ai' || item.id !== candidate.id);
+  // keep only latest few AI adapters
+  const nonAi = adapters.filter((item) => item.source !== 'ai');
+  const aiList = adapters.filter((item) => item.source === 'ai');
+  const nextAi = [candidate].concat(aiList).slice(0, 5);
+  await saveAdapterState(nonAi.concat(nextAi), candidate.id);
+
+  return {
+    success: true,
+    message: `修复完成，已重新提取并保存规则（${dry.products.length} 个商品）`,
+    adapter: candidate,
+    products: dry.products,
+    quality: dry.quality,
+    baselineRank: baseline.rank,
+    newRank
+  };
+}
+
+async function clearAiAdapters() {
+  const state = await loadAdapterState();
+  const kept = state.adapters.filter((item) => item.source !== 'ai');
+  await saveAdapterState(kept, '');
+  return { success: true, message: '已清除 AI 规则并回退内置规则', activeAdapterId: BUILTIN_ADAPTER_ID };
+}
+
+async function getAdapterInfo() {
+  const state = await loadAdapterState();
+  return {
+    success: true,
+    activeAdapterId: state.activeAdapterId || BUILTIN_ADAPTER_ID,
+    adapters: state.adapters.map((item) => ({
+      id: item.id,
+      source: item.source,
+      version: item.version,
+      site: item.site,
+      updatedAt: item.updatedAt || ''
+    }))
+  };
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getConfig') {
     chrome.storage.sync.get('settings', (result) => {
@@ -528,6 +818,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.action === 'runAiRepair') {
+    const tabId = request.tabId || (sender && sender.tab && sender.tab.id) || null;
+    runAiRepair(tabId).then((result) => {
+      sendResponse(result);
+    }).catch((error) => {
+      console.error('[1688 Smart Scraper] AI repair failed:', error);
+      sendResponse({ success: false, message: error.message || String(error) });
+    });
+    return true;
+  }
+
+  if (request.action === 'clearAiAdapters') {
+    clearAiAdapters().then((result) => sendResponse(result)).catch((error) => {
+      sendResponse({ success: false, message: error.message || String(error) });
+    });
+    return true;
+  }
+
+  if (request.action === 'getAdapterInfo') {
+    getAdapterInfo().then((result) => sendResponse(result)).catch((error) => {
+      sendResponse({ success: false, message: error.message || String(error) });
+    });
+    return true;
+  }
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -540,10 +855,13 @@ chrome.runtime.onInstalled.addListener((details) => {
         filterAds: true,
         columns: { ...DEFAULT_COLUMNS },
         language: 'zh',
-        imageSize: 120
+        imageSize: 120,
+        aiApiKey: '',
+        aiBaseUrl: 'https://api.openai.com/v1',
+        aiModel: 'gpt-4o-mini'
       }
     });
   }
 });
 
-console.log('[1688 Smart Scraper] Background service worker started v1.7.0');
+console.log('[1688 Smart Scraper] Background service worker started v1.8.0');

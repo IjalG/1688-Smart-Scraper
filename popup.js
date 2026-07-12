@@ -33,6 +33,17 @@ const I18N = {
     newFolder: '新建文件夹',
     defaultFolder: '默认',
     selectFolder: '选择文件夹',
+    aiHint: '无法正常提取信息？试试 AI 分析模式吧',
+    aiRepair: '开始 AI 修复',
+    aiRepairing: '正在 AI 分析修复...',
+    aiRepairOk: '修复完成，已重新提取并保存规则',
+    aiRepairFail: '未能自动修复，请稍后重试或检查 API 配置',
+    aiNeedKey: '请先在设置中填写 AI API Key',
+    clearAiRules: '清除 AI 规则 / 回退内置',
+    aiRulesCleared: '已清除 AI 规则并回退内置规则',
+    aiApiKey: 'AI API Key（可选，仅手动修复时使用）',
+    aiBaseUrl: 'AI Base URL',
+    aiModel: 'AI Model',
     cols: { '序号': '序号', '图片': '图片', '商品标题': '商品标题', '价格': '价格', '销量': '销量', '店铺名称': '店铺名称', '商品链接': '商品链接' }
   },
   en: {
@@ -69,6 +80,17 @@ const I18N = {
     newFolder: 'New Folder',
     defaultFolder: 'Default',
     selectFolder: 'Select Folder',
+    aiHint: 'Cannot extract products? Try AI analysis mode',
+    aiRepair: 'Start AI Repair',
+    aiRepairing: 'Running AI repair...',
+    aiRepairOk: 'Repair complete. Rules saved and re-extracted',
+    aiRepairFail: 'Auto repair failed. Retry later or check API settings',
+    aiNeedKey: 'Please set AI API Key in settings first',
+    clearAiRules: 'Clear AI rules / rollback builtin',
+    aiRulesCleared: 'AI rules cleared, back to builtin',
+    aiApiKey: 'AI API Key (optional, manual repair only)',
+    aiBaseUrl: 'AI Base URL',
+    aiModel: 'AI Model',
     cols: { '序号': 'No.', '图片': 'Image', '商品标题': 'Title', '价格': 'Price', '销量': 'Sales', '店铺名称': 'Shop', '商品链接': 'Link' }
   }
 };
@@ -81,7 +103,10 @@ const DEFAULT_SETTINGS = {
   filterAds: true,
   imageSize: 120,
   columns: { '序号': true, '图片': true, '商品标题': true, '价格': true, '销量': true, '店铺名称': true, '商品链接': true },
-  language: 'zh'
+  language: 'zh',
+  aiApiKey: '',
+  aiBaseUrl: 'https://api.openai.com/v1',
+  aiModel: 'gpt-4o-mini'
 };
 
 async function loadSettings() {
@@ -101,6 +126,19 @@ async function loadSettings() {
 async function saveSettings(settings) {
   await chrome.storage.sync.set({ settings });
 }
+
+function showAiHint(show, text) {
+  const hint = document.getElementById('aiHint');
+  if (!hint) return;
+  if (show) {
+    hint.style.display = 'block';
+    hint.textContent = text || t('aiHint');
+  } else {
+    hint.style.display = 'none';
+    hint.textContent = '';
+  }
+}
+
 
 function showMainView() {
   document.getElementById('mainView').classList.add('active');
@@ -188,6 +226,17 @@ function applyLanguage() {
   document.getElementById('saveSettingsBtn').textContent = t('save');
   document.getElementById('cancelSettingsBtn').textContent = t('cancel');
 
+  const aiRepairBtn = document.getElementById('aiRepairBtn');
+  if (aiRepairBtn) aiRepairBtn.textContent = t('aiRepair');
+  const clearAiRulesBtn = document.getElementById('clearAiRulesBtn');
+  if (clearAiRulesBtn) clearAiRulesBtn.textContent = t('clearAiRules');
+  const aiApiKeyLabel = document.querySelector('#aiApiKey')?.previousElementSibling;
+  if (aiApiKeyLabel) aiApiKeyLabel.textContent = t('aiApiKey');
+  const aiBaseUrlLabel = document.querySelector('#aiBaseUrl')?.previousElementSibling;
+  if (aiBaseUrlLabel) aiBaseUrlLabel.textContent = t('aiBaseUrl');
+  const aiModelLabel = document.querySelector('#aiModel')?.previousElementSibling;
+  if (aiModelLabel) aiModelLabel.textContent = t('aiModel');
+
   const langSelect = document.getElementById('language');
   if (langSelect.options.length === 0) {
     const opt1 = document.createElement('option');
@@ -215,6 +264,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('language').value = settings.language || 'zh';
+  const aiApiKeyEl = document.getElementById('aiApiKey');
+  const aiBaseUrlEl = document.getElementById('aiBaseUrl');
+  const aiModelEl = document.getElementById('aiModel');
+  if (aiApiKeyEl) aiApiKeyEl.value = settings.aiApiKey || '';
+  if (aiBaseUrlEl) aiBaseUrlEl.value = settings.aiBaseUrl || DEFAULT_SETTINGS.aiBaseUrl;
+  if (aiModelEl) aiModelEl.value = settings.aiModel || DEFAULT_SETTINGS.aiModel;
 
   updateCollectionBadge();
   applyLanguage();
@@ -306,11 +361,14 @@ document.getElementById('addToCollectionBtn').addEventListener('click', async ()
     } else {
       status.textContent = (response && response.message) || t('noProducts');
       status.className = 'status error';
+      const needAi = !response || !response.success || response.suggestAiRepair || (response.quality && response.quality.suggestAiRepair);
+      showAiHint(needAi, (response && (response.aiHint || (response.quality && response.quality.aiHint))) || t('aiHint'));
     }
   } catch (error) {
     console.error(error);
     status.textContent = t('refreshRetry');
     status.className = 'status error';
+    showAiHint(true, t('aiHint'));
   }
 
   btn.disabled = false;
@@ -386,7 +444,10 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     filterAds: document.getElementById('filterAds').checked,
     imageSize,
     columns: columns,
-    language: document.getElementById('language').value || 'zh'
+    language: document.getElementById('language').value || 'zh',
+    aiApiKey: (document.getElementById('aiApiKey')?.value || '').trim(),
+    aiBaseUrl: (document.getElementById('aiBaseUrl')?.value || DEFAULT_SETTINGS.aiBaseUrl).trim().replace(/\/$/, ''),
+    aiModel: (document.getElementById('aiModel')?.value || DEFAULT_SETTINGS.aiModel).trim()
   };
 
   await saveSettings(settings);
@@ -408,6 +469,9 @@ document.getElementById('cancelSettingsBtn').addEventListener('click', async () 
   const imageSizeEl = document.getElementById('imageSize');
   if (imageSizeEl) imageSizeEl.value = String(settings.imageSize || 120);
   document.getElementById('language').value = settings.language || 'zh';
+  if (document.getElementById('aiApiKey')) document.getElementById('aiApiKey').value = settings.aiApiKey || '';
+  if (document.getElementById('aiBaseUrl')) document.getElementById('aiBaseUrl').value = settings.aiBaseUrl || DEFAULT_SETTINGS.aiBaseUrl;
+  if (document.getElementById('aiModel')) document.getElementById('aiModel').value = settings.aiModel || DEFAULT_SETTINGS.aiModel;
 
   ALL_COLUMNS.forEach(col => {
     const cb = document.getElementById('col_' + col);
@@ -415,4 +479,76 @@ document.getElementById('cancelSettingsBtn').addEventListener('click', async () 
   });
 
   showMainView();
+});
+
+
+document.getElementById('aiRepairBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('status');
+  const btn = document.getElementById('aiRepairBtn');
+  const settings = await loadSettings();
+  if (!settings.aiApiKey) {
+    status.textContent = t('aiNeedKey');
+    status.className = 'status error';
+    showSettingsView();
+    return;
+  }
+
+  btn.disabled = true;
+  status.textContent = t('aiRepairing');
+  status.className = 'status';
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url || !tab.url.includes('1688.com')) {
+      status.textContent = t('useOn1688');
+      status.className = 'status error';
+      btn.disabled = false;
+      return;
+    }
+
+    // 自定义兼容接口域名需要可选主机权限
+    try {
+      const base = (settings.aiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+      const origin = new URL(base).origin + '/*';
+      if (chrome.permissions && chrome.permissions.request) {
+        await chrome.permissions.request({ origins: [origin] });
+      }
+    } catch (permErr) {
+      console.warn('[1688 Smart Scraper] optional host permission skipped', permErr);
+    }
+
+    const result = await chrome.runtime.sendMessage({ action: 'runAiRepair', tabId: tab.id });
+    if (result && result.success) {
+      status.textContent = result.message || t('aiRepairOk');
+      status.className = 'status';
+      showAiHint(false);
+    } else {
+      status.textContent = (result && result.message) || t('aiRepairFail');
+      status.className = 'status error';
+      showAiHint(true, t('aiHint'));
+    }
+  } catch (error) {
+    console.error(error);
+    status.textContent = t('aiRepairFail') + (error && error.message ? ': ' + error.message : '');
+    status.className = 'status error';
+  }
+
+  btn.disabled = false;
+});
+
+document.getElementById('clearAiRulesBtn')?.addEventListener('click', async () => {
+  try {
+    const result = await chrome.runtime.sendMessage({ action: 'clearAiAdapters' });
+    const status = document.getElementById('status');
+    status.textContent = (result && result.message) || t('aiRulesCleared');
+    status.className = 'status';
+    showMainView();
+    setTimeout(() => {
+      if (status.textContent === ((result && result.message) || t('aiRulesCleared'))) status.textContent = '';
+    }, 2500);
+  } catch (error) {
+    const status = document.getElementById('status');
+    status.textContent = error.message || String(error);
+    status.className = 'status error';
+  }
 });

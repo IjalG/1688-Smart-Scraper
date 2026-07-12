@@ -136,7 +136,14 @@ const I18N = {
     exportSaving: '正在保存文件...',
     exportDone: '导出完成',
     qualityWarning: '已提取商品，但部分字段可能不完整，可直接修改售价和图片后再导出',
-    pageStructureHint: '未能识别到商品，页面结构可能已更新。请刷新 1688 页面后重试'
+    pageStructureHint: '未能识别到商品，页面结构可能已更新。请刷新 1688 页面后重试',
+    aiHint: '无法正常提取信息？试试 AI 分析模式吧',
+    aiRepair: '开始 AI 修复',
+    aiRepairing: '正在 AI 分析修复...',
+    aiRepairOk: '修复完成，已重新提取并保存规则',
+    aiRepairFail: '未能自动修复，请稍后重试或检查扩展设置中的 AI 配置',
+    aiNeedKey: '请先在扩展弹窗设置中填写 AI API Key',
+    retryLoad: '重新加载'
   },
   en: {
     productSelection: '1688 Product Selection',
@@ -193,7 +200,14 @@ const I18N = {
     exportSaving: 'Saving file...',
     exportDone: 'Export completed',
     qualityWarning: 'Products extracted, but some fields may be incomplete. You can edit price/image before export.',
-    pageStructureHint: 'No products recognized. The page structure may have changed. Refresh the 1688 page and try again.'
+    pageStructureHint: 'No products recognized. The page structure may have changed. Refresh the 1688 page and try again.',
+    aiHint: 'Cannot extract products? Try AI analysis mode',
+    aiRepair: 'Start AI Repair',
+    aiRepairing: 'Running AI repair...',
+    aiRepairOk: 'Repair complete. Rules saved and re-extracted',
+    aiRepairFail: 'Auto repair failed. Retry later or check AI settings in the extension popup',
+    aiNeedKey: 'Please set AI API Key in the extension popup settings first',
+    retryLoad: 'Reload'
   }
 };
 
@@ -783,20 +797,80 @@ async function init() {
 
       if (response.quality && response.quality.ok === false) {
         const sub = document.querySelector('.header-sub');
-        if (sub) sub.textContent = t('qualityWarning');
+        if (sub) {
+          const hint = response.aiHint || (response.quality && response.quality.aiHint) || t('aiHint');
+          sub.innerHTML = `${escapeHtml(t('qualityWarning'))} · <a href="#" id="headerAiRepairLink" style="color:#fff;text-decoration:underline;">${escapeHtml(hint)}</a>`;
+          const link = document.getElementById('headerAiRepairLink');
+          if (link) {
+            link.addEventListener('click', async (e) => {
+              e.preventDefault();
+              await runAiRepairFromSelect(currentTabId, sub);
+            });
+          }
+        }
       }
     } else {
-      throw new Error((response && response.message) || t('pageStructureHint'));
+      const err = new Error((response && response.message) || t('pageStructureHint'));
+      err.suggestAiRepair = !response || response.suggestAiRepair !== false;
+      throw err;
     }
   } catch (error) {
+    const message = error.message || t('noProducts');
     loadingOverlay.innerHTML = `
-      <div style="text-align: center; color: #999; max-width: 420px; padding: 0 20px;">
+      <div style="text-align: center; color: #999; max-width: 460px; padding: 0 20px;">
         <div style="font-size: 48px; margin-bottom: 15px;">❌</div>
-        <div style="font-size: 14px; margin-bottom: 12px; line-height: 1.5;">${escapeHtml(error.message || t('noProducts'))}</div>
-        <div style="font-size: 12px; margin-bottom: 20px; color: #bbb;">${escapeHtml(t('pageStructureHint'))}</div>
-        <button onclick="window.close()" style="padding: 10px 30px; font-size: 14px; background: #ff6600; color: white; border: none; border-radius: 6px; cursor: pointer;">Close</button>
+        <div style="font-size: 14px; margin-bottom: 12px; line-height: 1.5;">${escapeHtml(message)}</div>
+        <div style="font-size: 12px; margin-bottom: 8px; color: #bbb;">${escapeHtml(t('pageStructureHint'))}</div>
+        <div style="font-size: 13px; margin-bottom: 16px; color: #b35c00;">${escapeHtml(t('aiHint'))}</div>
+        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+          <button id="aiRepairOverlayBtn" style="padding: 10px 18px; font-size: 14px; background: #4a90d9; color: white; border: none; border-radius: 6px; cursor: pointer;">${escapeHtml(t('aiRepair'))}</button>
+          <button id="reloadOverlayBtn" style="padding: 10px 18px; font-size: 14px; background: #fff; color: #333; border: 1px solid #ddd; border-radius: 6px; cursor: pointer;">${escapeHtml(t('retryLoad'))}</button>
+          <button onclick="window.close()" style="padding: 10px 18px; font-size: 14px; background: #ff6600; color: white; border: none; border-radius: 6px; cursor: pointer;">Close</button>
+        </div>
+        <div id="aiRepairOverlayStatus" style="margin-top:12px;font-size:12px;color:#666;"></div>
       </div>
     `;
+    const repairBtn = document.getElementById('aiRepairOverlayBtn');
+    const reloadBtn = document.getElementById('reloadOverlayBtn');
+    const statusEl = document.getElementById('aiRepairOverlayStatus');
+    if (repairBtn) {
+      repairBtn.addEventListener('click', async () => {
+        await runAiRepairFromSelect(currentTabId, statusEl, true);
+      });
+    }
+    if (reloadBtn) {
+      reloadBtn.addEventListener('click', () => window.location.reload());
+    }
+  }
+}
+
+async function runAiRepairFromSelect(tabId, statusEl, reloadOnSuccess) {
+  const settingsResult = await chrome.storage.sync.get('settings');
+  const settings = settingsResult.settings || {};
+  if (!settings.aiApiKey) {
+    if (statusEl) statusEl.textContent = t('aiNeedKey');
+    else alert(t('aiNeedKey'));
+    return;
+  }
+  if (!tabId) {
+    if (statusEl) statusEl.textContent = t('missingParam');
+    return;
+  }
+  if (statusEl) statusEl.textContent = t('aiRepairing');
+  try {
+    const result = await chrome.runtime.sendMessage({ action: 'runAiRepair', tabId });
+    if (result && result.success) {
+      if (statusEl) statusEl.textContent = result.message || t('aiRepairOk');
+      if (reloadOnSuccess || true) {
+        setTimeout(() => window.location.reload(), 600);
+      }
+    } else {
+      if (statusEl) statusEl.textContent = (result && result.message) || t('aiRepairFail');
+      else alert((result && result.message) || t('aiRepairFail'));
+    }
+  } catch (error) {
+    if (statusEl) statusEl.textContent = t('aiRepairFail') + (error && error.message ? ': ' + error.message : '');
+    else alert(t('aiRepairFail'));
   }
 }
 
