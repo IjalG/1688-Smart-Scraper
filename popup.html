@@ -57,6 +57,10 @@ button.collection:hover {
 .error {
   color: #d00;
 }
+.status.success {
+  color: #0a7a32;
+  font-weight: 600;
+}
 .settings-title {
   font-size: 16px;
   font-weight: bold;
@@ -231,6 +235,14 @@ button.collection:hover {
       <label><input type="checkbox" id="col_店铺名称" checked> 店铺名称</label>
       <label><input type="checkbox" id="col_商品链接" checked> 商品链接</label>
     </div>
+  </div>
+
+  <div class="divider"></div>
+  <div class="setting-item">
+    <label id="collectionToolsTitle">收藏工具</label>
+    <button id="backupCollectionBtn" class="secondary" type="button" style="margin-bottom:8px;">备份收藏夹</button>
+    <button id="restoreCollectionBtn" class="secondary" type="button" style="margin-bottom:0;">恢复收藏夹</button>
+    <input type="file" id="restoreCollectionInput" accept="application/json,.json" style="display:none">
   </div>
 
   <div class="button-row">

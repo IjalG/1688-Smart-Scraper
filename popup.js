@@ -41,6 +41,13 @@ const I18N = {
     aiNeedKey: '请先在设置中填写 AI API Key',
     clearAiRules: '清除 AI 规则 / 回退内置',
     aiRulesCleared: '已清除 AI 规则并回退内置规则',
+    backupCollection: '备份收藏夹',
+    restoreCollection: '恢复收藏夹',
+    backupDone: '已导出收藏备份',
+    restoreDone: '已恢复收藏：{count} 个商品',
+    restoreInvalid: '备份文件无效',
+    restoreConfirm: '恢复将覆盖当前收藏夹与文件夹，是否继续？',
+    collectionTools: '收藏工具',
     aiApiKey: 'AI API Key（可选，仅手动修复时使用）',
     aiBaseUrl: 'AI Base URL',
     aiModel: 'AI Model',
@@ -88,6 +95,13 @@ const I18N = {
     aiNeedKey: 'Please set AI API Key in settings first',
     clearAiRules: 'Clear AI rules / rollback builtin',
     aiRulesCleared: 'AI rules cleared, back to builtin',
+    backupCollection: 'Backup Collection',
+    restoreCollection: 'Restore Collection',
+    backupDone: 'Collection backup exported',
+    restoreDone: 'Restored {count} products',
+    restoreInvalid: 'Invalid backup file',
+    restoreConfirm: 'Restore will overwrite current collection and folders. Continue?',
+    collectionTools: 'Collection Tools',
     aiApiKey: 'AI API Key (optional, manual repair only)',
     aiBaseUrl: 'AI Base URL',
     aiModel: 'AI Model',
@@ -230,6 +244,12 @@ function applyLanguage() {
   if (aiRepairBtn) aiRepairBtn.textContent = t('aiRepair');
   const clearAiRulesBtn = document.getElementById('clearAiRulesBtn');
   if (clearAiRulesBtn) clearAiRulesBtn.textContent = t('clearAiRules');
+  const backupBtn = document.getElementById('backupCollectionBtn');
+  if (backupBtn) backupBtn.textContent = t('backupCollection');
+  const restoreBtn = document.getElementById('restoreCollectionBtn');
+  if (restoreBtn) restoreBtn.textContent = t('restoreCollection');
+  const collectionToolsTitle = document.getElementById('collectionToolsTitle');
+  if (collectionToolsTitle) collectionToolsTitle.textContent = t('collectionTools');
   const aiApiKeyLabel = document.querySelector('#aiApiKey')?.previousElementSibling;
   if (aiApiKeyLabel) aiApiKeyLabel.textContent = t('aiApiKey');
   const aiBaseUrlLabel = document.querySelector('#aiBaseUrl')?.previousElementSibling;
@@ -334,11 +354,24 @@ document.getElementById('addToCollectionBtn').addEventListener('click', async ()
           return;
         }
         if (offerId) {
-          collection.push({ ...p, _offerId: String(offerId), folder: targetFolder });
+          collection.push({
+            ...p,
+            _offerId: String(offerId),
+            folder: targetFolder,
+            status: p.status || 'pending',
+            notes: p.notes || '',
+            tags: Array.isArray(p.tags) ? p.tags : []
+          });
           existingIds.add(String(offerId));
           addedCount++;
         } else {
-          collection.push({ ...p, folder: targetFolder });
+          collection.push({
+            ...p,
+            folder: targetFolder,
+            status: p.status || 'pending',
+            notes: p.notes || '',
+            tags: Array.isArray(p.tags) ? p.tags : []
+          });
           addedCount++;
         }
       });
@@ -519,9 +552,21 @@ document.getElementById('aiRepairBtn')?.addEventListener('click', async () => {
 
     const result = await chrome.runtime.sendMessage({ action: 'runAiRepair', tabId: tab.id });
     if (result && result.success) {
-      status.textContent = result.message || t('aiRepairOk');
-      status.className = 'status';
+      const count = Array.isArray(result.products) ? result.products.length : 0;
+      const okMsg = result.message || (count > 0 ? `${t('aiRepairOk')}（${count}）` : t('aiRepairOk'));
+      status.textContent = okMsg;
+      status.className = 'status success';
       showAiHint(false);
+      // Keep success message visible long enough for the user to notice
+      const token = String(Date.now());
+      status.dataset.msgToken = token;
+      setTimeout(() => {
+        if (status.dataset.msgToken === token && status.classList.contains('success')) {
+          status.textContent = '';
+          status.className = 'status';
+          delete status.dataset.msgToken;
+        }
+      }, 5000);
     } else {
       status.textContent = (result && result.message) || t('aiRepairFail');
       status.className = 'status error';
@@ -550,5 +595,86 @@ document.getElementById('clearAiRulesBtn')?.addEventListener('click', async () =
     const status = document.getElementById('status');
     status.textContent = error.message || String(error);
     status.className = 'status error';
+  }
+});
+
+function setPopupStatus(message, kind) {
+  const status = document.getElementById('status');
+  if (!status) return;
+  status.textContent = message || '';
+  status.className = kind === 'error' ? 'status error' : (kind === 'success' ? 'status success' : 'status');
+}
+
+document.getElementById('backupCollectionBtn')?.addEventListener('click', async () => {
+  try {
+    const result = await chrome.storage.local.get(['productCollection', 'folders']);
+    const products = result.productCollection || [];
+    const folders = result.folders || [{ id: 'default', name: '默认' }];
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      folders,
+      productCollection: products
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `1688-collection-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setPopupStatus(t('backupDone'), 'success');
+    showMainView();
+  } catch (error) {
+    setPopupStatus(error.message || String(error), 'error');
+  }
+});
+
+document.getElementById('restoreCollectionBtn')?.addEventListener('click', () => {
+  const input = document.getElementById('restoreCollectionInput');
+  if (input) {
+    input.value = '';
+    input.click();
+  }
+});
+
+document.getElementById('restoreCollectionInput')?.addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!confirm(t('restoreConfirm'))) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const products = data.productCollection || data.products || data.collection || [];
+    if (!Array.isArray(products)) throw new Error(t('restoreInvalid'));
+    let folders = data.folders;
+    if (!Array.isArray(folders) || folders.length === 0) {
+      folders = [{ id: 'default', name: '默认' }];
+    }
+    const parseTags = (value) => {
+      if (Array.isArray(value)) {
+        return value.map((item) => String(item || '').trim()).filter(Boolean);
+      }
+      return String(value || '')
+        .split(/[,，]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    };
+    const normalized = products.map((p) => ({
+      ...p,
+      folder: (p && p.folder) || 'default',
+      status: ['pending', 'candidate', 'rejected'].includes(p && p.status) ? p.status : 'pending',
+      notes: (p && p.notes) != null ? String(p.notes) : '',
+      tags: parseTags(p && p.tags)
+    }));
+    await chrome.storage.local.set({ productCollection: normalized, folders });
+    await updateCollectionBadge();
+    setPopupStatus(t('restoreDone').replace('{count}', String(normalized.length)), 'success');
+    showMainView();
+  } catch (error) {
+    setPopupStatus((error && error.message) || t('restoreInvalid'), 'error');
   }
 });

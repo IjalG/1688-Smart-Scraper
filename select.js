@@ -38,11 +38,15 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-let filterState = { search: '', priceMin: '', priceMax: '' };
+let filterState = { search: '', priceMin: '', priceMax: '', status: 'all' };
+let sortState = { mode: 'default', weightPrice: 1, weightSales: 1 };
 let isCollectionMode = false;
 let currentLang = 'zh';
 let currentFolder = 'default';
 let folders = [{ id: 'default', name: '默认' }];
+
+const STATUS_VALUES = ['pending', 'candidate', 'rejected'];
+const DEFAULT_STATUS = 'pending';
 
 function initResizeHandle() {
   const handle = document.getElementById('resizeHandle');
@@ -123,6 +127,28 @@ const I18N = {
     folderCreated: '已创建文件夹',
     folderRenamed: '已重命名文件夹',
     sales: '销量',
+    statusFilter: '状态',
+    statusAll: '全部',
+    statusPending: '待看',
+    statusCandidate: '候选',
+    statusRejected: '淘汰',
+    notePlaceholder: '备注（可搜索）',
+    tagsPlaceholder: '标签，逗号分隔',
+    sortBy: '排序',
+    sortDefault: '默认',
+    sortScoreDesc: '评分高→低',
+    sortPriceAsc: '价格低→高',
+    sortPriceDesc: '价格高→低',
+    sortSalesDesc: '销量高→低',
+    weightPrice: '价权',
+    weightSales: '销权',
+    scoreLabel: '评分',
+    backupCollection: '备份',
+    restoreCollection: '恢复',
+    backupDone: '已导出收藏备份',
+    restoreDone: '已恢复收藏：{count} 个商品',
+    restoreInvalid: '备份文件无效',
+    restoreConfirm: '恢复将覆盖当前收藏夹与文件夹，是否继续？',
     priceUnit: '元',
     replaceImage: '替换图片',
     openImage: '查看图片',
@@ -187,6 +213,28 @@ const I18N = {
     folderCreated: 'Folder created',
     folderRenamed: 'Folder renamed',
     sales: 'Sales',
+    statusFilter: 'Status',
+    statusAll: 'All',
+    statusPending: 'Pending',
+    statusCandidate: 'Candidate',
+    statusRejected: 'Rejected',
+    notePlaceholder: 'Notes (searchable)',
+    tagsPlaceholder: 'Tags, comma separated',
+    sortBy: 'Sort',
+    sortDefault: 'Default',
+    sortScoreDesc: 'Score high→low',
+    sortPriceAsc: 'Price low→high',
+    sortPriceDesc: 'Price high→low',
+    sortSalesDesc: 'Sales high→low',
+    weightPrice: 'Price w.',
+    weightSales: 'Sales w.',
+    scoreLabel: 'Score',
+    backupCollection: 'Backup',
+    restoreCollection: 'Restore',
+    backupDone: 'Collection backup exported',
+    restoreDone: 'Restored {count} products',
+    restoreInvalid: 'Invalid backup file',
+    restoreConfirm: 'Restore will overwrite current collection and folders. Continue?',
     priceUnit: '',
     replaceImage: 'Replace image',
     openImage: 'Open image',
@@ -243,6 +291,12 @@ function applyI18n() {
   const ctxOpen = document.getElementById('ctxOpenImage');
   if (ctxReplace) ctxReplace.textContent = t('replaceImage');
   if (ctxOpen) ctxOpen.textContent = t('openImage');
+
+  // select options with data-i18n
+  document.querySelectorAll('option[data-i18n]').forEach((el) => {
+    const key = el.getAttribute('data-i18n');
+    if (key) el.textContent = t(key);
+  });
 }
 
 async function saveCollection(products) {
@@ -253,11 +307,118 @@ async function saveFolders(f) {
   await chrome.storage.local.set({ folders: f });
 }
 
+function normalizeStatus(status) {
+  return STATUS_VALUES.includes(status) ? status : DEFAULT_STATUS;
+}
+
+function parseTags(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  return String(value || '')
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeProductMeta(product) {
+  if (!product || typeof product !== 'object') return product;
+  product.folder = product.folder || 'default';
+  product.status = normalizeStatus(product.status);
+  product.notes = product.notes != null ? String(product.notes) : '';
+  product.tags = parseTags(product.tags);
+  return product;
+}
+
+function normalizeCollection(list) {
+  return (list || []).map((item) => normalizeProductMeta({ ...item }));
+}
+
+function parseSalesNumber(value) {
+  const text = String(value == null ? '' : value).trim().toLowerCase().replace(/,/g, '');
+  if (!text) return 0;
+  const match = text.match(/([\d.]+)\s*([万千百wk])?/i);
+  if (!match) {
+    const n = parseFloat(text.replace(/[^\d.]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  }
+  let num = parseFloat(match[1]);
+  if (!Number.isFinite(num)) return 0;
+  const unit = (match[2] || '').toLowerCase();
+  if (unit === '万' || unit === 'w') num *= 10000;
+  else if (unit === '千' || unit === 'k') num *= 1000;
+  else if (unit === '百') num *= 100;
+  return num;
+}
+
+function parsePriceNumber(value) {
+  const n = parseFloat(String(value == null ? '' : value).replace(/[^\d.]/g, ''));
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function computeScore(product, weights) {
+  const wPrice = Number(weights && weights.weightPrice);
+  const wSales = Number(weights && weights.weightSales);
+  const priceW = Number.isFinite(wPrice) ? wPrice : 1;
+  const salesW = Number.isFinite(wSales) ? wSales : 1;
+  const price = parsePriceNumber(product.价格);
+  const sales = parseSalesNumber(product.销量);
+  // Lower price better; missing price gets neutral 0 contribution
+  const priceScore = Number.isFinite(price) && price > 0 ? (100 / (price + 1)) : 0;
+  const salesScore = Math.log10(sales + 1) * 20;
+  const statusBoost = product.status === 'candidate' ? 8 : (product.status === 'rejected' ? -20 : 0);
+  return priceW * priceScore + salesW * salesScore + statusBoost;
+}
+
+function statusLabel(status) {
+  const key = status === 'candidate' ? 'statusCandidate'
+    : status === 'rejected' ? 'statusRejected'
+    : 'statusPending';
+  return t(key);
+}
+
 function getFolderProducts(folderId) {
-  if (!isCollectionMode) return currentProducts;
-  return currentProducts
+  if (!isCollectionMode) {
+    return currentProducts.map((product, index) => ({ product, index }));
+  }
+  let entries = currentProducts
     .map((p, index) => ({ product: p, index }))
     .filter(({ product }) => (product.folder || 'default') === folderId);
+
+  if (filterState.status && filterState.status !== 'all') {
+    entries = entries.filter(({ product }) => normalizeStatus(product.status) === filterState.status);
+  }
+
+  if (sortState.mode && sortState.mode !== 'default') {
+    entries = entries.slice().sort((a, b) => {
+      const pa = a.product;
+      const pb = b.product;
+      if (sortState.mode === 'score_desc') {
+        return computeScore(pb, sortState) - computeScore(pa, sortState);
+      }
+      if (sortState.mode === 'price_asc') {
+        const va = parsePriceNumber(pa.价格);
+        const vb = parsePriceNumber(pb.价格);
+        if (!Number.isFinite(va) && !Number.isFinite(vb)) return 0;
+        if (!Number.isFinite(va)) return 1;
+        if (!Number.isFinite(vb)) return -1;
+        return va - vb;
+      }
+      if (sortState.mode === 'price_desc') {
+        const va = parsePriceNumber(pa.价格);
+        const vb = parsePriceNumber(pb.价格);
+        if (!Number.isFinite(va) && !Number.isFinite(vb)) return 0;
+        if (!Number.isFinite(va)) return 1;
+        if (!Number.isFinite(vb)) return -1;
+        return vb - va;
+      }
+      if (sortState.mode === 'sales_desc') {
+        return parseSalesNumber(pb.销量) - parseSalesNumber(pa.销量);
+      }
+      return 0;
+    });
+  }
+  return entries;
 }
 
 function updateSelectCount() {
@@ -418,10 +579,13 @@ function renderProductList(listItems) {
 
   entries.forEach(({ product, index }) => {
     selectedProducts.add(index);
+    if (isCollectionMode) normalizeProductMeta(product);
 
     const item = document.createElement('div');
-    item.className = 'product-item selected';
+    const status = isCollectionMode ? normalizeStatus(product.status) : '';
+    item.className = 'product-item selected' + (status === 'rejected' ? ' status-rejected' : '');
     item.dataset.index = index;
+    if (status) item.dataset.status = status;
 
     const deleteBtnHtml = isCollectionMode
       ? `<button class="delete-btn" data-index="${index}" title="Delete">✕</button>`
@@ -429,6 +593,23 @@ function renderProductList(listItems) {
 
     const priceValue = product.价格 != null ? String(product.价格) : '';
     const imageUrl = normalizeImageUrl(product.图片链接);
+    const score = isCollectionMode ? computeScore(product, sortState) : null;
+    const noteValue = product.notes || '';
+    const tagsValue = Array.isArray(product.tags) ? product.tags.join(', ') : '';
+
+    const collectionControls = isCollectionMode ? `
+        <div class="product-controls">
+          <span class="product-status ${escapeAttr(status)}">${escapeHtml(statusLabel(status))}</span>
+          <select class="status-select" data-index="${index}">
+            <option value="pending"${status === 'pending' ? ' selected' : ''}>${escapeHtml(t('statusPending'))}</option>
+            <option value="candidate"${status === 'candidate' ? ' selected' : ''}>${escapeHtml(t('statusCandidate'))}</option>
+            <option value="rejected"${status === 'rejected' ? ' selected' : ''}>${escapeHtml(t('statusRejected'))}</option>
+          </select>
+          <input class="tags-input" type="text" data-index="${index}" value="${escapeAttr(tagsValue)}" placeholder="${escapeAttr(t('tagsPlaceholder'))}">
+          <span class="product-score">${escapeHtml(t('scoreLabel'))}: ${escapeHtml(score.toFixed(1))}</span>
+        </div>
+        <textarea class="product-note" data-index="${index}" placeholder="${escapeAttr(t('notePlaceholder'))}">${escapeHtml(noteValue)}</textarea>
+    ` : '';
 
     item.innerHTML = `
       <input type="checkbox" checked data-index="${index}">
@@ -444,6 +625,7 @@ function renderProductList(listItems) {
           <span style="margin-left: 8px;">${escapeHtml(t('sales'))}: ${escapeHtml(product.销量 || '0')}</span>
         </div>
         <div class="product-shop">${escapeHtml(product.店铺名称 || '')}</div>
+        ${collectionControls}
       </div>
       ${deleteBtnHtml}
     `;
@@ -473,9 +655,67 @@ function renderProductList(listItems) {
       setProductPrice(index, e.target.value);
     });
 
+    if (isCollectionMode) {
+      const statusSelect = item.querySelector('.status-select');
+      if (statusSelect) {
+        statusSelect.addEventListener('click', (e) => e.stopPropagation());
+        statusSelect.addEventListener('mousedown', (e) => e.stopPropagation());
+        statusSelect.addEventListener('change', (e) => {
+          e.stopPropagation();
+          const next = normalizeStatus(e.target.value);
+          currentProducts[index].status = next;
+          item.dataset.status = next;
+          item.classList.toggle('status-rejected', next === 'rejected');
+          const badge = item.querySelector('.product-status');
+          if (badge) {
+            badge.className = 'product-status ' + next;
+            badge.textContent = statusLabel(next);
+          }
+          const scoreEl = item.querySelector('.product-score');
+          if (scoreEl) scoreEl.textContent = `${t('scoreLabel')}: ${computeScore(currentProducts[index], sortState).toFixed(1)}`;
+          persistProductEdits();
+          if (filterState.status !== 'all' && filterState.status !== next) {
+            renderProductList(getFolderProducts(currentFolder));
+            applyFilters();
+          } else if (sortState.mode === 'score_desc') {
+            renderProductList(getFolderProducts(currentFolder));
+            applyFilters();
+          }
+        });
+      }
+      const tagsInput = item.querySelector('.tags-input');
+      if (tagsInput) {
+        tagsInput.addEventListener('click', (e) => e.stopPropagation());
+        tagsInput.addEventListener('mousedown', (e) => e.stopPropagation());
+        tagsInput.addEventListener('keydown', (e) => e.stopPropagation());
+        const commitTags = (e) => {
+          currentProducts[index].tags = parseTags(e.target.value);
+          e.target.value = currentProducts[index].tags.join(', ');
+          persistProductEdits();
+        };
+        tagsInput.addEventListener('change', commitTags);
+        tagsInput.addEventListener('blur', commitTags);
+      }
+      const noteInput = item.querySelector('.product-note');
+      if (noteInput) {
+        noteInput.addEventListener('click', (e) => e.stopPropagation());
+        noteInput.addEventListener('mousedown', (e) => e.stopPropagation());
+        noteInput.addEventListener('keydown', (e) => e.stopPropagation());
+        const commitNote = (e) => {
+          currentProducts[index].notes = String(e.target.value || '');
+          persistProductEdits();
+        };
+        noteInput.addEventListener('change', commitNote);
+        noteInput.addEventListener('blur', commitNote);
+      }
+    }
+
     const productInfo = item.querySelector('.product-info');
     productInfo.addEventListener('click', (e) => {
       if (e.target.classList.contains('price-input')) return;
+      if (e.target.classList.contains('status-select')) return;
+      if (e.target.classList.contains('tags-input')) return;
+      if (e.target.classList.contains('product-note')) return;
       e.stopPropagation();
       const link = productInfo.dataset.link;
       if (link) showPreview(link, product.商品标题 || 'Product');
@@ -494,6 +734,9 @@ function renderProductList(listItems) {
       if (e.target === checkbox) return;
       if (e.target.classList.contains('delete-btn')) return;
       if (e.target.classList.contains('price-input')) return;
+      if (e.target.classList.contains('status-select')) return;
+      if (e.target.classList.contains('tags-input')) return;
+      if (e.target.classList.contains('product-note')) return;
       setFocus(index);
     });
 
@@ -607,13 +850,18 @@ function matchesFilter(product) {
     const q = filterState.search.toLowerCase();
     const title = (product.商品标题 || '').toLowerCase();
     const shop = (product.店铺名称 || '').toLowerCase();
-    if (!title.includes(q) && !shop.includes(q)) return false;
+    const notes = (product.notes || '').toLowerCase();
+    const tags = parseTags(product.tags).join(' ').toLowerCase();
+    if (!title.includes(q) && !shop.includes(q) && !notes.includes(q) && !tags.includes(q)) return false;
   }
-  const price = parseFloat(product.价格);
-  if (filterState.priceMin !== '' && !isNaN(price)) {
+  if (isCollectionMode && filterState.status && filterState.status !== 'all') {
+    if (normalizeStatus(product.status) !== filterState.status) return false;
+  }
+  const price = parsePriceNumber(product.价格);
+  if (filterState.priceMin !== '' && Number.isFinite(price)) {
     if (price < parseFloat(filterState.priceMin)) return false;
   }
-  if (filterState.priceMax !== '' && !isNaN(price)) {
+  if (filterState.priceMax !== '' && Number.isFinite(price)) {
     if (price > parseFloat(filterState.priceMax)) return false;
   }
   return true;
@@ -644,7 +892,8 @@ function initFilters() {
     filterState = {
       search: searchInput.value || '',
       priceMin: priceMin.value || '',
-      priceMax: priceMax.value || ''
+      priceMax: priceMax.value || '',
+      status: (document.getElementById('statusFilter') && document.getElementById('statusFilter').value) || filterState.status || 'all'
     };
     applyFilters();
   };
@@ -656,9 +905,131 @@ function initFilters() {
     searchInput.value = '';
     priceMin.value = '';
     priceMax.value = '';
-    filterState = { search: '', priceMin: '', priceMax: '' };
+    filterState = {
+      search: '',
+      priceMin: '',
+      priceMax: '',
+      status: (document.getElementById('statusFilter') && document.getElementById('statusFilter').value) || 'all'
+    };
     applyFilters();
   });
+}
+
+function refreshCollectionView() {
+  if (!isCollectionMode) return;
+  selectedProducts.clear();
+  renderProductList(getFolderProducts(currentFolder));
+  applyFilters();
+  updateFolderProductsCount();
+}
+
+function initWorkflowControls() {
+  const bar = document.getElementById('workflowBar');
+  if (!bar || !isCollectionMode) return;
+  bar.classList.add('active');
+
+  const statusFilter = document.getElementById('statusFilter');
+  const sortSelect = document.getElementById('sortSelect');
+  const weightPrice = document.getElementById('weightPrice');
+  const weightSales = document.getElementById('weightSales');
+  const backupBtn = document.getElementById('backupBtn');
+  const restoreBtn = document.getElementById('restoreBtn');
+  const restoreFileInput = document.getElementById('restoreFileInput');
+
+  if (statusFilter) {
+    statusFilter.value = filterState.status || 'all';
+    statusFilter.addEventListener('change', () => {
+      filterState.status = statusFilter.value || 'all';
+      refreshCollectionView();
+    });
+  }
+  if (sortSelect) {
+    sortSelect.value = sortState.mode || 'default';
+    sortSelect.addEventListener('change', () => {
+      sortState.mode = sortSelect.value || 'default';
+      refreshCollectionView();
+    });
+  }
+  const onWeightChange = () => {
+    sortState.weightPrice = parseFloat(weightPrice && weightPrice.value) || 0;
+    sortState.weightSales = parseFloat(weightSales && weightSales.value) || 0;
+    if (sortState.mode === 'score_desc') refreshCollectionView();
+    else {
+      // still refresh scores on cards
+      document.querySelectorAll('.product-item').forEach((item) => {
+        const idx = parseInt(item.dataset.index, 10);
+        const scoreEl = item.querySelector('.product-score');
+        if (scoreEl && currentProducts[idx]) {
+          scoreEl.textContent = `${t('scoreLabel')}: ${computeScore(currentProducts[idx], sortState).toFixed(1)}`;
+        }
+      });
+    }
+  };
+  if (weightPrice) weightPrice.addEventListener('change', onWeightChange);
+  if (weightSales) weightSales.addEventListener('change', onWeightChange);
+
+  if (backupBtn) {
+    backupBtn.addEventListener('click', () => {
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        folders,
+        productCollection: currentProducts
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      a.href = url;
+      a.download = `1688-collection-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      alert(t('backupDone'));
+    });
+  }
+
+  if (restoreBtn && restoreFileInput) {
+    restoreBtn.addEventListener('click', () => {
+      restoreFileInput.value = '';
+      restoreFileInput.click();
+    });
+    restoreFileInput.addEventListener('change', async () => {
+      const file = restoreFileInput.files && restoreFileInput.files[0];
+      if (!file) return;
+      if (!confirm(t('restoreConfirm'))) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const products = normalizeCollection(data.productCollection || data.products || data.collection || []);
+        if (!Array.isArray(products)) throw new Error('invalid');
+        let nextFolders = data.folders;
+        if (!Array.isArray(nextFolders) || nextFolders.length === 0) {
+          nextFolders = [{ id: 'default', name: currentLang === 'en' ? 'Default' : '默认' }];
+        } else {
+          nextFolders = nextFolders.map((f, i) => ({
+            id: String((f && f.id) || (i === 0 ? 'default' : `folder_${i}`)),
+            name: String((f && f.name) || (i === 0 ? (currentLang === 'en' ? 'Default' : '默认') : `Folder ${i}`))
+          }));
+          if (!nextFolders.some((f) => f.id === 'default')) {
+            nextFolders.unshift({ id: 'default', name: currentLang === 'en' ? 'Default' : '默认' });
+          }
+        }
+        currentProducts = products;
+        folders = nextFolders;
+        currentFolder = 'default';
+        await saveCollection(currentProducts);
+        await saveFolders(folders);
+        renderFolderSelect();
+        refreshCollectionView();
+        alert(msg('restoreDone', { count: currentProducts.length }));
+      } catch (err) {
+        console.error(err);
+        alert(t('restoreInvalid'));
+      }
+    });
+  }
 }
 
 function setExportProgress(text, active) {
@@ -742,12 +1113,15 @@ async function init() {
 
     if (isCollectionMode) {
       const result = await chrome.storage.local.get(['productCollection', 'folders']);
-      currentProducts = result.productCollection || [];
+      currentProducts = normalizeCollection(result.productCollection || []);
       folders = result.folders || [{ id: 'default', name: currentLang === 'en' ? 'Default' : '默认' }];
 
       if (currentProducts.length === 0) {
         throw new Error(t('collectionEmpty'));
       }
+
+      // migrate old collection items once
+      await saveCollection(currentProducts);
 
       document.getElementById('folderBar').style.display = 'flex';
       document.getElementById('deleteSelectedBtn').style.display = 'inline-block';
@@ -764,6 +1138,7 @@ async function init() {
       updateFolderProductsCount();
       initKeyboardShortcuts();
       initFilters();
+      initWorkflowControls();
       initResizeHandle();
       return;
     }
@@ -844,32 +1219,53 @@ async function init() {
   }
 }
 
+function setAiRepairStatus(statusEl, message, kind) {
+  if (!statusEl) return;
+  statusEl.textContent = message || '';
+  if (kind === 'success') {
+    statusEl.style.color = '#0a7a32';
+    statusEl.style.fontWeight = '600';
+  } else if (kind === 'error') {
+    statusEl.style.color = '#d00';
+    statusEl.style.fontWeight = '600';
+  } else {
+    statusEl.style.color = '#666';
+    statusEl.style.fontWeight = 'normal';
+  }
+}
+
 async function runAiRepairFromSelect(tabId, statusEl, reloadOnSuccess) {
   const settingsResult = await chrome.storage.sync.get('settings');
   const settings = settingsResult.settings || {};
   if (!settings.aiApiKey) {
-    if (statusEl) statusEl.textContent = t('aiNeedKey');
+    if (statusEl) setAiRepairStatus(statusEl, t('aiNeedKey'), 'error');
     else alert(t('aiNeedKey'));
     return;
   }
   if (!tabId) {
-    if (statusEl) statusEl.textContent = t('missingParam');
+    if (statusEl) setAiRepairStatus(statusEl, t('missingParam'), 'error');
     return;
   }
-  if (statusEl) statusEl.textContent = t('aiRepairing');
+  if (statusEl) setAiRepairStatus(statusEl, t('aiRepairing'), 'info');
   try {
     const result = await chrome.runtime.sendMessage({ action: 'runAiRepair', tabId });
     if (result && result.success) {
-      if (statusEl) statusEl.textContent = result.message || t('aiRepairOk');
-      if (reloadOnSuccess || true) {
-        setTimeout(() => window.location.reload(), 600);
+      const count = Array.isArray(result.products) ? result.products.length : 0;
+      const okMsg = result.message || (count > 0 ? `${t('aiRepairOk')}（${count}）` : t('aiRepairOk'));
+      if (statusEl) setAiRepairStatus(statusEl, okMsg, 'success');
+      else alert(okMsg);
+      // Show success feedback before reload so the user can notice it
+      if (reloadOnSuccess !== false) {
+        setTimeout(() => window.location.reload(), 1200);
       }
     } else {
-      if (statusEl) statusEl.textContent = (result && result.message) || t('aiRepairFail');
-      else alert((result && result.message) || t('aiRepairFail'));
+      const failMsg = (result && result.message) || t('aiRepairFail');
+      if (statusEl) setAiRepairStatus(statusEl, failMsg, 'error');
+      else alert(failMsg);
     }
   } catch (error) {
-    if (statusEl) statusEl.textContent = t('aiRepairFail') + (error && error.message ? ': ' + error.message : '');
+    const failMsg = t('aiRepairFail') + (error && error.message ? ': ' + error.message : '');
+    if (statusEl) setAiRepairStatus(statusEl, failMsg, 'error');
     else alert(t('aiRepairFail'));
   }
 }
@@ -999,6 +1395,15 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     const idx = parseInt(input.dataset.index, 10);
     if (!Number.isNaN(idx)) setProductPrice(idx, input.value);
   });
+  document.querySelectorAll('.product-note').forEach((input) => {
+    const idx = parseInt(input.dataset.index, 10);
+    if (!Number.isNaN(idx) && currentProducts[idx]) currentProducts[idx].notes = String(input.value || '');
+  });
+  document.querySelectorAll('.tags-input').forEach((input) => {
+    const idx = parseInt(input.dataset.index, 10);
+    if (!Number.isNaN(idx) && currentProducts[idx]) currentProducts[idx].tags = parseTags(input.value);
+  });
+  if (isCollectionMode) persistProductEdits();
 
   const selectedList = Array.from(selectedProducts)
     .sort((a, b) => a - b)

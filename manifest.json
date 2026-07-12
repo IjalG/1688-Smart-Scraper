@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "1688 智能选品助手",
-  "version": "1.8.0",
-  "description": "人工浏览 + 人工筛选 + 一键整理采购清单。支持选择页改价换图、导出进度、规则适配器与手动 AI 修复。",
+  "version": "1.9.0",
+  "description": "人工浏览 + 人工筛选 + 一键整理采购清单。支持收藏状态/备注/备份、自定义评分排序、选择页改价换图、规则适配器与手动 AI 修复。",
   "permissions": [
     "activeTab",
     "scripting",

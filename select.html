@@ -502,6 +502,100 @@ body {
   font-size: 10px;
   font-family: monospace;
 }
+
+.workflow-bar {
+  display: none;
+  gap: 6px;
+  padding: 8px 15px;
+  border-bottom: 1px solid #eee;
+  background: #f7f9fc;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.workflow-bar.active { display: flex; }
+.workflow-bar select,
+.workflow-bar input[type="number"],
+.workflow-bar input[type="text"] {
+  padding: 5px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+  background: #fff;
+}
+.workflow-bar select:focus,
+.workflow-bar input:focus { border-color: #ff6600; }
+.workflow-bar .wf-label {
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+}
+.workflow-bar button {
+  padding: 5px 10px;
+  font-size: 12px;
+  background: #fff;
+  color: #333;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.workflow-bar button:hover { background: #f5f5f5; }
+.product-status {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  margin-right: 6px;
+  border: 1px solid transparent;
+}
+.product-status.pending { background: #f0f0f0; color: #666; }
+.product-status.candidate { background: #e8f5e9; color: #1b7a34; }
+.product-status.rejected { background: #fdecea; color: #b42318; }
+.product-score {
+  display: inline-block;
+  font-size: 11px;
+  color: #4a90d9;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.product-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.product-controls select,
+.product-controls input[type="text"] {
+  padding: 3px 6px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 11px;
+  outline: none;
+  background: #fff;
+  max-width: 100%;
+}
+.product-controls select:focus,
+.product-controls input:focus { border-color: #ff6600; }
+.product-note {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 6px;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  font-size: 11px;
+  resize: vertical;
+  min-height: 28px;
+  max-height: 72px;
+  outline: none;
+  font-family: inherit;
+  color: #555;
+}
+.product-note:focus { border-color: #ff6600; }
+.product-item.status-rejected {
+  opacity: 0.72;
+}
 </style>
 </head>
 <body>
@@ -540,6 +634,31 @@ body {
       <span class="filter-sep">-</span>
       <input type="number" id="priceMax" data-i18n-placeholder="maxPrice" placeholder="Max" min="0" step="0.01">
       <button class="filter-clear" id="clearFilterBtn" data-i18n="clearFilter">Clear</button>
+    </div>
+
+    <div class="workflow-bar" id="workflowBar">
+      <span class="wf-label" data-i18n="statusFilter">状态</span>
+      <select id="statusFilter">
+        <option value="all" data-i18n="statusAll">全部</option>
+        <option value="pending" data-i18n="statusPending">待看</option>
+        <option value="candidate" data-i18n="statusCandidate">候选</option>
+        <option value="rejected" data-i18n="statusRejected">淘汰</option>
+      </select>
+      <span class="wf-label" data-i18n="sortBy">排序</span>
+      <select id="sortSelect">
+        <option value="default" data-i18n="sortDefault">默认</option>
+        <option value="score_desc" data-i18n="sortScoreDesc">评分高→低</option>
+        <option value="price_asc" data-i18n="sortPriceAsc">价格低→高</option>
+        <option value="price_desc" data-i18n="sortPriceDesc">价格高→低</option>
+        <option value="sales_desc" data-i18n="sortSalesDesc">销量高→低</option>
+      </select>
+      <span class="wf-label" data-i18n="weightPrice">价权</span>
+      <input type="number" id="weightPrice" min="0" max="10" step="0.1" value="1" style="width:56px" title="price weight">
+      <span class="wf-label" data-i18n="weightSales">销权</span>
+      <input type="number" id="weightSales" min="0" max="10" step="0.1" value="1" style="width:56px" title="sales weight">
+      <button type="button" id="backupBtn" data-i18n="backupCollection">备份</button>
+      <button type="button" id="restoreBtn" data-i18n="restoreCollection">恢复</button>
+      <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none">
     </div>
     
     <div class="product-list" id="productList"></div>
