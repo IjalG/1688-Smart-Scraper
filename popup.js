@@ -27,6 +27,9 @@ const I18N = {
     save: '保存',
     cancel: '取消',
     language: '语言',
+    workbenchMode: '工作台模式',
+    modeSimple: '极简模式',
+    modePro: '专业模式',
     chinese: '中文',
     english: 'English',
     folder: '添加到文件夹',
@@ -81,6 +84,9 @@ const I18N = {
     save: 'Save',
     cancel: 'Cancel',
     language: 'Language',
+    workbenchMode: 'Workbench Mode',
+    modeSimple: 'Simple',
+    modePro: 'Pro',
     chinese: '中文',
     english: 'English',
     folder: 'Add to Folder',
@@ -118,6 +124,7 @@ const DEFAULT_SETTINGS = {
   imageSize: 120,
   columns: { '序号': true, '图片': true, '商品标题': true, '价格': true, '销量': true, '店铺名称': true, '商品链接': true },
   language: 'zh',
+  workbenchMode: 'simple',
   aiApiKey: '',
   aiBaseUrl: 'https://api.openai.com/v1',
   aiModel: 'gpt-4o-mini'
@@ -127,11 +134,13 @@ async function loadSettings() {
   try {
     const result = await chrome.storage.sync.get('settings');
     const loaded = result.settings || {};
-    return {
+    const merged = {
       ...DEFAULT_SETTINGS,
       ...loaded,
       columns: { ...DEFAULT_SETTINGS.columns, ...(loaded.columns || {}) }
     };
+    merged.workbenchMode = merged.workbenchMode === 'pro' ? 'pro' : 'simple';
+    return merged;
   } catch (e) {
     return DEFAULT_SETTINGS;
   }
@@ -266,6 +275,14 @@ function applyLanguage() {
     langSelect.appendChild(opt1);
     langSelect.appendChild(opt2);
   }
+
+  const modeLabel = document.getElementById('workbenchModeLabel');
+  if (modeLabel) modeLabel.textContent = t('workbenchMode');
+  const modeSelect = document.getElementById('workbenchMode');
+  if (modeSelect && modeSelect.options.length >= 2) {
+    modeSelect.options[0].textContent = t('modeSimple');
+    modeSelect.options[1].textContent = t('modePro');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -284,6 +301,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('language').value = settings.language || 'zh';
+  const workbenchModeEl = document.getElementById('workbenchMode');
+  if (workbenchModeEl) {
+    workbenchModeEl.value = settings.workbenchMode === 'pro' ? 'pro' : 'simple';
+  }
   const aiApiKeyEl = document.getElementById('aiApiKey');
   const aiBaseUrlEl = document.getElementById('aiBaseUrl');
   const aiModelEl = document.getElementById('aiModel');
@@ -478,6 +499,7 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     imageSize,
     columns: columns,
     language: document.getElementById('language').value || 'zh',
+    workbenchMode: document.getElementById('workbenchMode')?.value === 'pro' ? 'pro' : 'simple',
     aiApiKey: (document.getElementById('aiApiKey')?.value || '').trim(),
     aiBaseUrl: (document.getElementById('aiBaseUrl')?.value || DEFAULT_SETTINGS.aiBaseUrl).trim().replace(/\/$/, ''),
     aiModel: (document.getElementById('aiModel')?.value || DEFAULT_SETTINGS.aiModel).trim()
@@ -502,6 +524,10 @@ document.getElementById('cancelSettingsBtn').addEventListener('click', async () 
   const imageSizeEl = document.getElementById('imageSize');
   if (imageSizeEl) imageSizeEl.value = String(settings.imageSize || 120);
   document.getElementById('language').value = settings.language || 'zh';
+  const workbenchModeEl = document.getElementById('workbenchMode');
+  if (workbenchModeEl) {
+    workbenchModeEl.value = settings.workbenchMode === 'pro' ? 'pro' : 'simple';
+  }
   if (document.getElementById('aiApiKey')) document.getElementById('aiApiKey').value = settings.aiApiKey || '';
   if (document.getElementById('aiBaseUrl')) document.getElementById('aiBaseUrl').value = settings.aiBaseUrl || DEFAULT_SETTINGS.aiBaseUrl;
   if (document.getElementById('aiModel')) document.getElementById('aiModel').value = settings.aiModel || DEFAULT_SETTINGS.aiModel;

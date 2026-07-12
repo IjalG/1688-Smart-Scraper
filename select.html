@@ -541,6 +541,12 @@ body {
   white-space: nowrap;
 }
 .workflow-bar button:hover { background: #f5f5f5; }
+.weight-controls {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.weight-controls.hidden { display: none; }
 .product-status {
   display: inline-block;
   padding: 1px 6px;
@@ -652,10 +658,12 @@ body {
         <option value="price_desc" data-i18n="sortPriceDesc">价格高→低</option>
         <option value="sales_desc" data-i18n="sortSalesDesc">销量高→低</option>
       </select>
-      <span class="wf-label" data-i18n="weightPrice">价权</span>
-      <input type="number" id="weightPrice" min="0" max="10" step="0.1" value="1" style="width:56px" title="price weight">
-      <span class="wf-label" data-i18n="weightSales">销权</span>
-      <input type="number" id="weightSales" min="0" max="10" step="0.1" value="1" style="width:56px" title="sales weight">
+      <span id="weightControls" class="weight-controls">
+        <span class="wf-label" data-i18n="weightPrice">价权</span>
+        <input type="number" id="weightPrice" min="0" max="10" step="0.1" value="1" style="width:56px" title="price weight">
+        <span class="wf-label" data-i18n="weightSales">销权</span>
+        <input type="number" id="weightSales" min="0" max="10" step="0.1" value="1" style="width:56px" title="sales weight">
+      </span>
       <button type="button" id="backupBtn" data-i18n="backupCollection">备份</button>
       <button type="button" id="restoreBtn" data-i18n="restoreCollection">恢复</button>
       <input type="file" id="restoreFileInput" accept="application/json,.json" style="display:none">
